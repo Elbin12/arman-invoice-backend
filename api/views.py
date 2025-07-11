@@ -2,6 +2,7 @@ from django.shortcuts import render
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.permissions import AllowAny, IsAuthenticated
 
 
 from .models import Service, Contact
@@ -17,6 +18,7 @@ class dataView(APIView):
     
 class ServicesView(APIView):
     authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         name = request.data.get('name')
@@ -33,6 +35,7 @@ class ServicesView(APIView):
         
 class ContactsView(APIView):
     authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         first_name = request.query_params.get('first_name')
