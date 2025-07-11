@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.generics import ListAPIView
 
 
 from .models import Service, Contact
@@ -16,44 +17,35 @@ class dataView(APIView):
         print(services)
         return Response(status=200)
     
-class ServicesView(APIView):
+class ServicesView(ListAPIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
+    serializer_class = ServiceSerializer
 
-    def get(self, request):
-        name = request.data.get('name')
-        try:
-            queryset = Service.objects.using('external').all()
-            print(queryset)
-            if name:
-                queryset = queryset.filter(name=name)
-            serializer = ServiceSerializer(queryset, many=True)
-            return Response(serializer.data, status=200)
-        except Exception as e:
-            print(e,)
-            return Response({'error':'Something went wrong.'},status=500)
+    def get_queryset(self):
+        name = self.request.query_params.get('name')
+        queryset = Service.objects.using('external').all()
+        if name:
+            queryset = queryset.filter(name__icontains=name)
+        return queryset
         
-class ContactsView(APIView):
+class ContactsView(ListAPIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
+    serializer_class = ContactSerializer
 
-    def get(self, request):
-        first_name = request.query_params.get('first_name')
-        email = request.query_params.get('email')
-        phone = request.query_params.get('phone')
+    def get_queryset(self):
+        first_name = self.request.query_params.get('first_name')
+        email = self.request.query_params.get('email')
+        phone = self.request.query_params.get('phone')
 
-        try:
-            queryset = Contact.objects.using('external').all()
+        queryset = Contact.objects.using('external').all()
 
-            if first_name:
-                queryset = queryset.filter(first_name__icontains=first_name)
-            if email:
-                queryset = queryset.filter(email__icontains=email)
-            if phone:
-                queryset = queryset.filter(phone__icontains=phone)
+        if first_name:
+            queryset = queryset.filter(first_name__icontains=first_name)
+        if email:
+            queryset = queryset.filter(email__icontains=email)
+        if phone:
+            queryset = queryset.filter(phone__icontains=phone)
 
-            serializer = ContactSerializer(queryset, many=True)
-            return Response(serializer.data, status=200)
-        except Exception as e:
-            print(e,)
-            return Response({'error':'Something went wrong.'},status=500)
+        return queryset
