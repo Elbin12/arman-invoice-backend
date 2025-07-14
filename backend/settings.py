@@ -49,10 +49,24 @@ INSTALLED_APPS = [
     'api',
 ]
 
+
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+]
+
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
+    'django.middleware.common.CommonMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -93,13 +107,15 @@ DATABASES = {
     },
     'external': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv("NAME"),
+        'NAME': os.getenv("EXTERNAL_DB"),
         'USER': "postgres",
         'PASSWORD': os.getenv("PASSWORD"),
         'HOST': os.getenv("HOST"),
         'PORT': '5432',
     }
 }
+
+
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
