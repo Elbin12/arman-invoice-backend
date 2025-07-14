@@ -3,6 +3,8 @@ from celery import shared_task
 from ghl_auth.models import GHLAuthCredentials
 from django.conf import settings
 
+from api.utils import send_invoice, extract_invoice_id_from_name
+
 
 GHL_CLIENT_ID = settings.GHL_CLIENT_ID
 GHL_CLIENT_SECRET = settings.GHL_CLIENT_SECRET
@@ -42,8 +44,18 @@ def make_api_call():
 @shared_task
 def handle_webhook_event(data, event_type):
     try:
-        if event_type in ["OpportunityUpdate"]:
-            # updateJob(data)
-            pass
+        if event_type in ["OpportunityStatusUpdate"]:
+            opportunity = data.get("opportunity", {})
+            status = opportunity.get("status", "").lower()
+            opportunity_name = opportunity.get("name", "")
+            
+            # Only proceed if status is completed
+            if status == "completed":
+                invoice_id = extract_invoice_id_from_name(opportunity_name)
+
+                if invoice_id:
+                    send_invoice(invoice_id)
+                else:
+                    print(f"Invoice ID could not be extracted from opportunity name: {opportunity_name}")
     except Exception as e:
         print(f"Error handling webhook event: {str(e)}")

@@ -72,7 +72,7 @@ class CreateJob(APIView):
             return Response({"error": "No GHL credentials configured."}, status=500)
 
         # You need to fetch service info from DB or pass it in request
-        services = request.data.get("services")  # Expects a list of dicts
+        services = request.data.get("service")  # Expects a list of dicts
 
         # Step 1: Create Invoice
         invoice_response = create_invoice(
@@ -82,7 +82,8 @@ class CreateJob(APIView):
             credentials=credentials
         )
 
-        invoice_id = invoice_response.get("id")
+        invoice_id = invoice_response.get("_id")
+        print(invoice_response)
         if not invoice_id:
             return Response({
                 "message": "Job created, but failed to create invoice in GHL.",
@@ -99,8 +100,11 @@ class CreateJob(APIView):
             monetary_value=total,
         )
 
-        if ghl_response.get("id"):
-            opp_id = ghl_response.get("id")
+        print(ghl_response.get('opportunity').get('id'), 'idddd')
+
+        opp_id = ghl_response.get('opportunity').get("id")
+
+        if opp_id:
             add_followers(opp_id, assigned_to, credentials)
             return Response({
                 "message": "Job created, invoice and opportunity created in GHL.",
