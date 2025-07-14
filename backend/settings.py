@@ -47,6 +47,19 @@ INSTALLED_APPS = [
     'corsheaders',
 
     'api',
+    'ghl_auth',
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
 ]
 
 
@@ -204,4 +217,25 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20
+}
+
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+
+GHL_CLIENT_ID = os.getenv('GHL_CLIENT_ID')
+GHL_CLIENT_SECRET = os.getenv("GHL_CLIENT_SECRET")
+GHL_REDIRECTED_URI = os.getenv("GHL_REDIRECTED_URI")
+FRONTEND_URL = os.getenv("FRONTEND_URL")
+SCOPE = os.getenv("SCOPE")
+BASE_URI = os.getenv("BASE_URI")
+
+CELERY_BEAT_SCHEDULE = {
+    'make-api-call-every-minute': {
+        'task': 'api.tasks.make_api_call',
+        'schedule': timedelta(hours=10)
+    },
 }
