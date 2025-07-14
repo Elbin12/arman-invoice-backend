@@ -12,7 +12,7 @@ from django.db.models import Q
 from .models import Service, Contact, Job, WebhookLog
 from ghl_auth.models import GHLAuthCredentials, GHLUser
 from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer
-from .utils import create_opportunity, create_invoice
+from .utils import create_opportunity, create_invoice, add_followers
 from .tasks import handle_webhook_event
 
 import json
@@ -97,10 +97,11 @@ class CreateJob(APIView):
             contact_id=contact_id,
             name=opportunity_name,
             monetary_value=total,
-            assigned_to=assigned_to
         )
 
         if ghl_response.get("id"):
+            opp_id = ghl_response.get("id")
+            add_followers(opp_id, assigned_to, credentials)
             return Response({
                 "message": "Job created, invoice and opportunity created in GHL.",
                 "job_id": ghl_response.get("id"),

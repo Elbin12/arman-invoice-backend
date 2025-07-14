@@ -84,7 +84,7 @@ def create_product(access_token, location_id, product_name, custom_data):
     return None
 
 
-def create_opportunity(contact_id, name, monetary_value=None, assigned_to=None, services=None):
+def create_opportunity(contact_id, name, monetary_value=None):
     """
     Create an opportunity in GHL.
 
@@ -120,9 +120,6 @@ def create_opportunity(contact_id, name, monetary_value=None, assigned_to=None, 
 
     if monetary_value:
         payload["monetaryValue"] = monetary_value
-
-    if assigned_to:
-        payload["assignedTo"] = assigned_to
 
     # if services:
     #     # Replace 'custom_field_services_abc123' with the actual custom field ID from GHL
@@ -228,3 +225,25 @@ def create_invoice(name, contact_id, services, credentials):
 
 def updateJob(data):
     pass
+
+
+
+def add_followers(id, followers, credentials):
+    url = f'https://services.leadconnectorhq.com/opportunities/{id}/followers'
+    
+    headers = {
+        'Accept': 'application/json',
+        'Authorization': f'Bearer {credentials.access_token}',
+        'Content-Type': 'application/json',
+        'Version': '2021-07-28'
+    }
+
+    payload = {
+        "followers": followers
+    }
+
+    try:
+        response = requests.post(url=url, headers=headers, json=payload)
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
