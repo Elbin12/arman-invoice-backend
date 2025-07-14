@@ -232,6 +232,8 @@ GHL_REDIRECTED_URI = os.getenv("GHL_REDIRECTED_URI")
 FRONTEND_URL = os.getenv("FRONTEND_URL")
 SCOPE = os.getenv("SCOPE")
 BASE_URI = os.getenv("BASE_URI")
+PIPELINE_ID = os.getenv("PIPELINE_ID")
+PIPELINE_STAGE_ID = os.getenv("PIPELINE_STAGE_ID")    
 
 CELERY_BEAT_SCHEDULE = {
     'make-api-call-every-minute': {

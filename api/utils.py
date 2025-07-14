@@ -5,6 +5,11 @@ from api.models import Contact
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
+
+PIPELINE_ID = settings.PIPELINE_ID
+PIPELINE_STAGE_ID = settings.PIPELINE_STAGE_ID
+
 def get_or_create_product(access_token, location_id, product_name, custom_data):
     headers = {
         'Accept': 'application/json',
@@ -108,8 +113,8 @@ def create_opportunity(contact_id, name, monetary_value=None, assigned_to=None, 
         "contactId": contact_id,
         "name": name,
         "locationId": credentials.location_id,
-        "pipelineId": "VDm7RPYC2GLUvdpKmBfC",  # Your hardcoded pipeline ID
-        "pipelineStageId": "7915dedc-8f18-44d5-8bc3-77c04e994a10",  # Your hardcoded stage ID
+        "pipelineId": PIPELINE_ID,  # Your hardcoded pipeline ID
+        "pipelineStageId": PIPELINE_STAGE_ID,  # Your hardcoded stage ID
         "status": "open",  # You can change as needed
     }
 
