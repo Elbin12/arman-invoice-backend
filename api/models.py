@@ -79,10 +79,6 @@ class Job(models.Model):
         if not Contact.objects.using('external').filter(contact_id=self.contact_id).exists():
             raise ValidationError("Invalid contact ID.")
         
-class UserPercentage(models.Model):
-    user = models.OneToOneField("ghl_auth.GHLUser", on_delete=models.CASCADE, related_name="percentage")
-    percentage = models.DecimalField(decimal_places=2, max_digits=10)
-        
 
 class Payout(models.Model):
     opportunity_id = models.CharField(max_length=100)

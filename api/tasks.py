@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from api.utils import send_invoice, extract_invoice_id_from_name
 from ghl_auth.models import GHLUser
-from .models import UserPercentage, Payout
+from .models import Payout
 
 GHL_CLIENT_ID = settings.GHL_CLIENT_ID
 GHL_CLIENT_SECRET = settings.GHL_CLIENT_SECRET
@@ -69,12 +69,7 @@ def handle_webhook_event(data):
                 print(f"User with ID {follower_id} does not exist.")
                 continue
 
-            try:
-                user_percentage = UserPercentage.objects.get(user=user).percentage
-            except UserPercentage.DoesNotExist:
-                user_percentage = Decimal("20.00")  # Default
-
-            payout_amount = (monetary_value * user_percentage) / Decimal("100.00")
+            payout_amount = (monetary_value * user.percentage) / Decimal("100.00")
 
             # Ensure unique payout per opportunity-user combo
             Payout.objects.get_or_create(

@@ -9,9 +9,9 @@ from django.http import JsonResponse
 from django.db.models import Q
 
 
-from .models import Service, Contact, Job, WebhookLog, UserPercentage
+from .models import Service, Contact, Job, WebhookLog
 from ghl_auth.models import GHLAuthCredentials, GHLUser
-from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, UserPercentageEditSerializer
+from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, GHLUserPercentageEditSerializer
 from .utils import create_opportunity, create_invoice, add_followers
 from .tasks import handle_webhook_event
 
@@ -138,18 +138,21 @@ class GHLUserSearchView(ListAPIView):
 class PayrollView(APIView):
     permission_classes = [IsAdminUser]
     def get(self, request):
-        users = GHLUser.objects.prefetch_related("payouts", "percentage").all()
+        users = GHLUser.objects.prefetch_related("payouts").all()
         serializer = PayrollSerializer(users, many=True)
         return Response(serializer.data)
     
     def put(self, request, user_id):
         try:
-            instance = UserPercentage.objects.get(user__user_id=user_id)
-        except UserPercentage.DoesNotExist:
-            return Response({"error": "UserPercentage not found."}, status=404)
+            user = GHLUser.objects.get(user_id=user_id)
+        except GHLUser.DoesNotExist:
+            return Response({"error": "User not found."}, status=404)
 
-        serializer = UserPercentageEditSerializer(instance, data=request.data)
+        serializer = GHLUserPercentageEditSerializer(user, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            return Response({"message": "Percentage updated", "percentage": serializer.data})
+            return Response({
+                "message": "Percentage updated",
+                "percentage": serializer.data
+            })
         return Response(serializer.errors, status=400)
