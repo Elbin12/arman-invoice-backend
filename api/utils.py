@@ -270,7 +270,7 @@ def send_invoice(invoiceId):
         "altId": credentials.location_id,
         "altType":'location',
         "userId": credentials.user_id,
-        "action":'email',
+        "action":'sms_and_email',
         "liveMode":True,
     }
 
