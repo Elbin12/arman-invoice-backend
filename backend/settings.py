@@ -55,13 +55,13 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
-    "http://13.58.139.11/"
+    "http://13.58.139.11"
 ]
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
-    "http://13.58.139.11/"
+    "http://13.58.139.11"
 ]
 
 MIDDLEWARE = [
