@@ -11,7 +11,7 @@ from django.db.models import Q
 
 from .models import Service, Contact, Job, WebhookLog, UserPercentage
 from ghl_auth.models import GHLAuthCredentials, GHLUser
-from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, UserPercentageListSerializer, UserPercentageEditSerializer
+from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, UserPercentageEditSerializer
 from .utils import create_opportunity, create_invoice, add_followers
 from .tasks import handle_webhook_event
 
@@ -138,26 +138,10 @@ class GHLUserSearchView(ListAPIView):
 class PayrollView(APIView):
     permission_classes = [IsAdminUser]
     def get(self, request):
-        # Only fetch users who have payouts
-        users = GHLUser.objects.prefetch_related("payouts").filter(payouts__isnull=False).distinct()
+        users = GHLUser.objects.prefetch_related("payouts", "percentage").all()
         serializer = PayrollSerializer(users, many=True)
         return Response(serializer.data)
     
-class UserPercentageListView(APIView):
-    def get(self, request):
-        percentages = UserPercentage.objects.select_related('user').all()
-        serializer = UserPercentageListSerializer(percentages, many=True)
-        return Response(serializer.data)
-    
-class UserPercentageDetailUpdateView(APIView):
-    def get(self, request, user_id):
-        try:
-            instance = UserPercentage.objects.get(user__user_id=user_id)
-            serializer = UserPercentageListSerializer(instance)
-            return Response(serializer.data)
-        except UserPercentage.DoesNotExist:
-            return Response({"error": "UserPercentage not found."}, status=404)
-
     def put(self, request, user_id):
         try:
             instance = UserPercentage.objects.get(user__user_id=user_id)
@@ -167,5 +151,5 @@ class UserPercentageDetailUpdateView(APIView):
         serializer = UserPercentageEditSerializer(instance, data=request.data)
         if serializer.is_valid():
             serializer.save()
-            return Response(serializer.data)
+            return Response({"message": "Percentage updated", "percentage": serializer.data})
         return Response(serializer.errors, status=400)
