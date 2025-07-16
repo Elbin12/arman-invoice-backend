@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
+    'django_celery_beat',
 
     'api',
     'ghl_auth',
@@ -212,6 +213,9 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
+
+
+
 
 GHL_CLIENT_ID = os.getenv('GHL_CLIENT_ID')
 GHL_CLIENT_SECRET = os.getenv("GHL_CLIENT_SECRET")
