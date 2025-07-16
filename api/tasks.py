@@ -2,7 +2,11 @@ import requests
 from celery import shared_task
 from ghl_auth.models import GHLAuthCredentials
 from django.conf import settings
+from decimal import Decimal
 
+from api.utils import send_invoice, extract_invoice_id_from_name
+from ghl_auth.models import GHLUser
+from .models import UserPercentage, Payout
 
 GHL_CLIENT_ID = settings.GHL_CLIENT_ID
 GHL_CLIENT_SECRET = settings.GHL_CLIENT_SECRET
@@ -39,11 +43,46 @@ def make_api_call():
             )
         print("refreshed: ", obj)
 
-@shared_task
-def handle_webhook_event(data, event_type):
+
+def handle_webhook_event(data):
     try:
-        if event_type in ["OpportunityUpdate"]:
-            # updateJob(data)
-            pass
+        opportunity = data.get("opportunity", {})
+        opportunity_id = opportunity.get('id','')
+        opportunity_name = opportunity.get("name", "")
+        monetary_value = Decimal(str(opportunity.get("monetaryValue", 0)))
+        follower_ids = opportunity.get("followers", [])
+
+        print('invoice id getting', follower_ids)
+        invoice_id = extract_invoice_id_from_name(opportunity_name)
+
+        print('sendinggg', invoice_id)
+        if invoice_id:
+            send_invoice(invoice_id)
+            print('sent')
+        else:
+            print(f"Invoice ID could not be extracted from opportunity name: {opportunity_name}")
+
+        for follower_id in follower_ids:
+            try:
+                user = GHLUser.objects.get(user_id=follower_id)
+            except GHLUser.DoesNotExist:
+                print(f"User with ID {follower_id} does not exist.")
+                continue
+
+            try:
+                user_percentage = UserPercentage.objects.get(user=user).percentage
+            except UserPercentage.DoesNotExist:
+                user_percentage = Decimal("20.00")  # Default
+
+            payout_amount = (monetary_value * user_percentage) / Decimal("100.00")
+
+            # Ensure unique payout per opportunity-user combo
+            Payout.objects.get_or_create(
+                opportunity_id=opportunity_id,
+                user=user,
+                defaults={
+                    "amount": float(payout_amount)
+                }
+            )
     except Exception as e:
         print(f"Error handling webhook event: {str(e)}")

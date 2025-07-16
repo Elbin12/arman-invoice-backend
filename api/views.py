@@ -2,16 +2,16 @@ from django.shortcuts import render
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.generics import ListAPIView
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.db.models import Q
 
 
-from .models import Service, Contact, Job, WebhookLog
+from .models import Service, Contact, Job, WebhookLog, UserPercentage
 from ghl_auth.models import GHLAuthCredentials, GHLUser
-from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer
+from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, UserPercentageListSerializer, UserPercentageEditSerializer
 from .utils import create_opportunity, create_invoice, add_followers
 from .tasks import handle_webhook_event
 
@@ -29,7 +29,7 @@ def webhook_handler(request):
         print("date:----- ", data)
         WebhookLog.objects.create(data=data)
         event_type = data.get("type")
-        handle_webhook_event.delay(data, event_type)
+        handle_webhook_event(data)
         return JsonResponse({"message":"Webhook received"}, status=200)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
@@ -72,7 +72,7 @@ class CreateJob(APIView):
             return Response({"error": "No GHL credentials configured."}, status=500)
 
         # You need to fetch service info from DB or pass it in request
-        services = request.data.get("services")  # Expects a list of dicts
+        services = request.data.get("service")  # Expects a list of dicts
 
         # Step 1: Create Invoice
         invoice_response = create_invoice(
@@ -82,7 +82,8 @@ class CreateJob(APIView):
             credentials=credentials
         )
 
-        invoice_id = invoice_response.get("id")
+        invoice_id = invoice_response.get("_id")
+        print(invoice_response)
         if not invoice_id:
             return Response({
                 "message": "Job created, but failed to create invoice in GHL.",
@@ -99,8 +100,11 @@ class CreateJob(APIView):
             monetary_value=total,
         )
 
-        if ghl_response.get("id"):
-            opp_id = ghl_response.get("id")
+        print(ghl_response.get('opportunity').get('id'), 'idddd')
+
+        opp_id = ghl_response.get('opportunity').get("id")
+
+        if opp_id:
             add_followers(opp_id, assigned_to, credentials)
             return Response({
                 "message": "Job created, invoice and opportunity created in GHL.",
@@ -130,3 +134,38 @@ class GHLUserSearchView(ListAPIView):
             Q(email__icontains=search) |
             Q(phone__icontains=search)
         )
+    
+class PayrollView(APIView):
+    permission_classes = [IsAdminUser]
+    def get(self, request):
+        # Only fetch users who have payouts
+        users = GHLUser.objects.prefetch_related("payouts").filter(payouts__isnull=False).distinct()
+        serializer = PayrollSerializer(users, many=True)
+        return Response(serializer.data)
+    
+class UserPercentageListView(APIView):
+    def get(self, request):
+        percentages = UserPercentage.objects.select_related('user').all()
+        serializer = UserPercentageListSerializer(percentages, many=True)
+        return Response(serializer.data)
+    
+class UserPercentageDetailUpdateView(APIView):
+    def get(self, request, user_id):
+        try:
+            instance = UserPercentage.objects.get(user__user_id=user_id)
+            serializer = UserPercentageListSerializer(instance)
+            return Response(serializer.data)
+        except UserPercentage.DoesNotExist:
+            return Response({"error": "UserPercentage not found."}, status=404)
+
+    def put(self, request, user_id):
+        try:
+            instance = UserPercentage.objects.get(user__user_id=user_id)
+        except UserPercentage.DoesNotExist:
+            return Response({"error": "UserPercentage not found."}, status=404)
+
+        serializer = UserPercentageEditSerializer(instance, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=400)

@@ -52,30 +52,24 @@ def create_product(access_token, location_id, product_name, custom_data):
     product_data = {
         "name": product_name,
         "locationId": location_id,
-        "description": f"Auto-created product: {product_name}",
+        "description": f"Auto-created product: {custom_data.get('description')}",
         "productType": "SERVICE",
         "availableInStore": True,
         "isTaxesEnabled": False,
         "isLabelEnabled": False,
         "slug": product_name.lower().replace(" ", "-").replace("_", "-"),
-        "prices": [  # Include pricing info to get priceId
-            {
-                "priceAmount": price,
-                "currency": "USD",
-                "isDefault": True
-            }
-        ]
     }
 
     url = "https://services.leadconnectorhq.com/products/"
 
     try:
         response = requests.post(url, headers=headers, json=product_data)
+        print(response.json(), 'response')
         if response.status_code in [200, 201]:
             product = response.json()
             product_id = product.get('_id')
-            price_id = product.get('prices', [{}])[0].get('_id')  # Extract first price
-            return {"productId": product_id, "priceId": price_id}
+            # price_id = product.get('prices', [{}])[0].get('_id')  # Extract first price
+            return {"productId": product_id}
         else:
             print(f"Failed to create product: {response.status_code} - {response.text}")
     except Exception as e:
@@ -106,7 +100,8 @@ def create_opportunity(contact_id, name, monetary_value=None):
 
     headers = {
         "Authorization": f"Bearer {credentials.access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Version": "2021-07-28"
     }
 
     payload = {
@@ -151,7 +146,8 @@ def create_invoice(name, contact_id, services, credentials):
     url = "https://services.leadconnectorhq.com/invoices/"
     headers = {
         "Authorization": f"Bearer {credentials.access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Version": "2021-07-28"
     }
 
     contact = Contact.objects.using('external').filter(contact_id=contact_id).first()
@@ -179,6 +175,15 @@ def create_invoice(name, contact_id, services, credentials):
             "qty": service.get("quantity", 1),
             "amount": service.get("price", 0.0),
             "productId": product_info["productId"],
+            "taxes": [
+                {
+                    "_id": "sales-tax-8-25",  # Your custom identifier
+                    "name": "Sales Tax",
+                    "rate": 8.25,
+                    "calculation": "exclusive",
+                    "description": f"8.25% standard US sales tax"
+                }
+            ]
         })
 
     discount= {
@@ -198,10 +203,10 @@ def create_invoice(name, contact_id, services, credentials):
     }
 
     sentTo = {
-        "email":contact.email
+        "email":[contact.email]
     }
 
-    issue_date = datetime.now(ZoneInfo("America/Chicago")).isoformat()
+    issue_date = datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%d")
 
     payload = {
         "altId": credentials.location_id,
@@ -215,6 +220,10 @@ def create_invoice(name, contact_id, services, credentials):
         "issueDate":issue_date,
         "sentTo": sentTo,
         "liveMode":True,
+        "tipsConfiguration":{
+            "tipsEnabled": False,
+            "tipsPercentage": []
+        }
     }
 
     response = requests.post(url, headers=headers, json=payload)
@@ -247,3 +256,33 @@ def add_followers(id, followers, credentials):
         return response.json()
     except Exception as e:
         return {"error": str(e)}
+    
+def send_invoice(invoiceId):
+    url = f'https://services.leadconnectorhq.com/invoices/{invoiceId}/send'
+    credentials = GHLAuthCredentials.objects.first()
+    
+    headers = {
+        'Authorization': f'Bearer {credentials.access_token}',
+        'Version': '2021-07-28'
+    }
+
+    payload = {
+        "altId": credentials.location_id,
+        "altType":'location',
+        "userId": credentials.user_id,
+        "action":'email',
+        "liveMode":True,
+    }
+
+    try:
+        response = requests.post(url=url, headers=headers, json=payload)
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+    
+
+def extract_invoice_id_from_name(opportunity_name):
+    try:
+        return opportunity_name.rsplit(" - ", 1)[-1]
+    except Exception:
+        return None
