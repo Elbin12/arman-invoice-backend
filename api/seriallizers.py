@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Service, Contact, Job, Payout, UserPercentage
+from .models import Service, Contact, Job, Payout
 from ghl_auth.models import GHLUser
 
 
@@ -40,9 +40,9 @@ class GHLUserSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
-class UserPercentageEditSerializer(serializers.ModelSerializer):
+class GHLUserPercentageEditSerializer(serializers.ModelSerializer):
     class Meta:
-        model = UserPercentage
+        model = GHLUser
         fields = ["percentage"]
 
 
@@ -55,17 +55,10 @@ class PayoutSerializer(serializers.ModelSerializer):
 class PayrollSerializer(serializers.ModelSerializer):
     total_payout = serializers.SerializerMethodField()
     payouts = serializers.SerializerMethodField()
-    percentage = serializers.SerializerMethodField()
 
     class Meta:
         model = GHLUser
         fields = ["user_id", "name", "email", "percentage", "total_payout", "payouts"]
-
-    def get_percentage(self, obj):
-        try:
-            return obj.percentage.percentage
-        except UserPercentage.DoesNotExist:
-            return None
 
     def get_total_payout(self, obj):
         return round(sum(p.amount for p in obj.payouts.all()), 2)
