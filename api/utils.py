@@ -287,3 +287,29 @@ def extract_invoice_id_from_name(opportunity_name):
         return opportunity_name.rsplit(" - ", 1)[-1]
     except Exception:
         return None
+
+def fetch_opportunity_by_id(opportunity_id):
+    """
+    Fetch a single opportunity's details from GHL by ID.
+    """
+    credentials = GHLAuthCredentials.objects.first()
+
+    url = f"https://services.leadconnectorhq.com/opportunities/{opportunity_id}"
+
+    headers = {
+        "Authorization": f"Bearer {credentials.access_token}",
+        "Content-Type": "application/json",
+        "Version": "2021-07-28"
+    }
+
+    try:
+        response = requests.get(url=url, headers=headers)
+        print(response.json(), 'response fetch opp')
+        if response.status_code == 200:
+            return response.json().get("opportunity", {})
+        else:
+            print(f"Failed to fetch opportunity. Status: {response.status_code}")
+            return {}
+    except Exception as e:
+        print(f"Error fetching opportunity by ID: {str(e)}")
+        return {}

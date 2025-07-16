@@ -13,7 +13,7 @@ from .models import Service, Contact, Job, WebhookLog
 from ghl_auth.models import GHLAuthCredentials, GHLUser
 from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, GHLUserPercentageEditSerializer
 from .utils import create_opportunity, create_invoice, add_followers
-from .tasks import handle_webhook_event
+from .tasks import handle_webhook_event, handle_user_create_webhook_event, payroll_webhook_event
 
 import json
 # Create your views here.
@@ -28,8 +28,37 @@ def webhook_handler(request):
         data = json.loads(request.body)
         print("date:----- ", data)
         WebhookLog.objects.create(data=data)
+        handle_webhook_event.delay(data)
+        return JsonResponse({"message":"Webhook received"}, status=200)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def user_create_webhook_handler(request):
+    if request.method != "POST":
+        return JsonResponse({"message": "Method not allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        print("date:----- ", data)
+        WebhookLog.objects.create(data=data)
         event_type = data.get("type")
-        handle_webhook_event(data)
+        handle_user_create_webhook_event.delay(data, event_type)
+        return JsonResponse({"message":"Webhook received"}, status=200)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+    
+@csrf_exempt
+def payroll_webhook_handler(request):
+    if request.method != "POST":
+        return JsonResponse({"message": "Method not allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        print("date:----- ", data)
+        WebhookLog.objects.create(data=data)
+        payroll_webhook_event.delay(data)
         return JsonResponse({"message":"Webhook received"}, status=200)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
