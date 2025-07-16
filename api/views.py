@@ -138,7 +138,7 @@ class GHLUserSearchView(ListAPIView):
 class PayrollView(APIView):
     permission_classes = [IsAdminUser]
     def get(self, request):
-        users = GHLUser.objects.prefetch_related("payouts").all()
+        users = GHLUser.objects.prefetch_related("payouts").all().order_by("first_name")
         serializer = PayrollSerializer(users, many=True)
         return Response(serializer.data)
     
