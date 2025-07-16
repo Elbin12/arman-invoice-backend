@@ -198,7 +198,7 @@ def create_invoice(name, contact_id, services, credentials):
     }
 
     businessDetails = {
-        "logoUrl":'',
+        "logoUrl":'https://storage.googleapis.com/msgsndr/b8qvo7VooP3JD3dIZU42/media/683efc8fd5817643ff8194f0.jpeg',
         "name":"TruShine Window Cleaning",
     }
 
@@ -276,6 +276,7 @@ def send_invoice(invoiceId):
 
     try:
         response = requests.post(url=url, headers=headers, json=payload)
+        print('invoice_response', response.json())
         return response.json()
     except Exception as e:
         return {"error": str(e)}

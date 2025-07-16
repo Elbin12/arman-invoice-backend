@@ -40,6 +40,12 @@ class GHLUserSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+class UserPercentageEditSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserPercentage
+        fields = ["percentage"]
+
+
 class PayoutSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payout
@@ -48,28 +54,22 @@ class PayoutSerializer(serializers.ModelSerializer):
 
 class PayrollSerializer(serializers.ModelSerializer):
     total_payout = serializers.SerializerMethodField()
-    payouts = PayoutSerializer(many=True)
+    payouts = serializers.SerializerMethodField()
+    percentage = serializers.SerializerMethodField()
 
     class Meta:
         model = GHLUser
-        fields = ["user_id", "name", "email", "total_payout", "payouts"]
+        fields = ["user_id", "name", "email", "percentage", "total_payout", "payouts"]
+
+    def get_percentage(self, obj):
+        try:
+            return obj.percentage.percentage
+        except UserPercentage.DoesNotExist:
+            return None
 
     def get_total_payout(self, obj):
         return round(sum(p.amount for p in obj.payouts.all()), 2)
 
-class GHLUserSimpleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = GHLUser
-        fields = ["id", "user_id", "name", "email"]
-    
-class UserPercentageListSerializer(serializers.ModelSerializer):
-    user = GHLUserSimpleSerializer(read_only=True)
-
-    class Meta:
-        model = UserPercentage
-        fields = ["id", "user", "percentage"]
-
-class UserPercentageEditSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = UserPercentage
-        fields = ["percentage"]
+    def get_payouts(self, obj):
+        payouts = obj.payouts.all()
+        return PayoutSerializer(payouts, many=True).data
