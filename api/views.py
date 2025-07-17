@@ -171,12 +171,27 @@ class PayrollView(APIView):
     def get(self, request):
         start_date = request.query_params.get("start_date")
         end_date = request.query_params.get("end_date")
+        user_id = request.query_params.get("user_id")
 
-        users = GHLUser.objects.prefetch_related("payouts").all().order_by("first_name")
-        serializer = PayrollSerializer(users, many=True, context={
-            "start_date": start_date,
-            "end_date": end_date
-        })
+        users_qs = GHLUser.objects.prefetch_related("payouts").order_by("first_name")
+
+        # If user_id is passed, filter to just that user
+        if user_id:
+            try:
+                user = users_qs.get(user_id=user_id)
+            except GHLUser.DoesNotExist:
+                return Response({"detail": "User not found"}, status=404)
+
+            serializer = PayrollSerializer(user, context={
+                "start_date": start_date,
+                "end_date": end_date
+            })
+        else:
+            serializer = PayrollSerializer(users_qs, many=True, context={
+                "start_date": start_date,
+                "end_date": end_date
+            })
+
         return Response(serializer.data)
     
     def put(self, request, user_id):
