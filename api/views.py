@@ -13,7 +13,7 @@ from .models import Service, Contact, Job, WebhookLog
 from ghl_auth.models import GHLAuthCredentials, GHLUser
 from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, GHLUserPercentageEditSerializer
 from .utils import create_opportunity, create_invoice, add_followers
-from .tasks import handle_webhook_event
+from .tasks import handle_webhook_event, handle_user_create_webhook_event, payroll_webhook_event
 
 import json
 # Create your views here.
@@ -28,8 +28,37 @@ def webhook_handler(request):
         data = json.loads(request.body)
         print("date:----- ", data)
         WebhookLog.objects.create(data=data)
+        handle_webhook_event.delay(data)
+        return JsonResponse({"message":"Webhook received"}, status=200)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def user_create_webhook_handler(request):
+    if request.method != "POST":
+        return JsonResponse({"message": "Method not allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        print("date:----- ", data)
+        WebhookLog.objects.create(data=data)
         event_type = data.get("type")
-        handle_webhook_event(data)
+        handle_user_create_webhook_event.delay(data, event_type)
+        return JsonResponse({"message":"Webhook received"}, status=200)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+    
+@csrf_exempt
+def payroll_webhook_handler(request):
+    if request.method != "POST":
+        return JsonResponse({"message": "Method not allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        print("date:----- ", data)
+        WebhookLog.objects.create(data=data)
+        payroll_webhook_event.delay(data)
         return JsonResponse({"message":"Webhook received"}, status=200)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
@@ -67,6 +96,7 @@ class CreateJob(APIView):
         contact_id = request.data.get('contact_id')
         assigned_to = request.data.get('assigned_to')
         name = request.data.get('title')
+        is_first_time = request.data.get('is_first_time')
         credentials = GHLAuthCredentials.objects.first()
         if not credentials:
             return Response({"error": "No GHL credentials configured."}, status=500)
@@ -98,6 +128,7 @@ class CreateJob(APIView):
             contact_id=contact_id,
             name=opportunity_name,
             monetary_value=total,
+            is_first_time=is_first_time
         )
 
         print(ghl_response.get('opportunity').get('id'), 'idddd')
@@ -138,8 +169,29 @@ class GHLUserSearchView(ListAPIView):
 class PayrollView(APIView):
     permission_classes = [IsAdminUser]
     def get(self, request):
-        users = GHLUser.objects.prefetch_related("payouts").all()
-        serializer = PayrollSerializer(users, many=True)
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        user_id = request.query_params.get("user_id")
+
+        users_qs = GHLUser.objects.prefetch_related("payouts").order_by("first_name")
+
+        # If user_id is passed, filter to just that user
+        if user_id:
+            try:
+                user = users_qs.get(user_id=user_id)
+            except GHLUser.DoesNotExist:
+                return Response({"detail": "User not found"}, status=404)
+
+            serializer = PayrollSerializer(user, context={
+                "start_date": start_date,
+                "end_date": end_date
+            })
+        else:
+            serializer = PayrollSerializer(users_qs, many=True, context={
+                "start_date": start_date,
+                "end_date": end_date
+            })
+
         return Response(serializer.data)
     
     def put(self, request, user_id):

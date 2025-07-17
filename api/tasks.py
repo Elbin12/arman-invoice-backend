@@ -4,7 +4,7 @@ from ghl_auth.models import GHLAuthCredentials
 from django.conf import settings
 from decimal import Decimal
 
-from api.utils import send_invoice, extract_invoice_id_from_name
+from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id
 from ghl_auth.models import GHLUser
 from .models import Payout
 
@@ -44,15 +44,10 @@ def make_api_call():
         print("refreshed: ", obj)
 
 
+@shared_task
 def handle_webhook_event(data):
     try:
-        opportunity = data.get("opportunity", {})
-        opportunity_id = opportunity.get('id','')
-        opportunity_name = opportunity.get("name", "")
-        monetary_value = Decimal(str(opportunity.get("monetaryValue", 0)))
-        follower_ids = opportunity.get("followers", [])
-
-        print('invoice id getting', follower_ids)
+        opportunity_name = data.get('opportunity_name')
         invoice_id = extract_invoice_id_from_name(opportunity_name)
 
         print('sendinggg', invoice_id)
@@ -62,22 +57,81 @@ def handle_webhook_event(data):
         else:
             print(f"Invoice ID could not be extracted from opportunity name: {opportunity_name}")
 
+    except Exception as e:
+        print(f"Error handling webhook event: {str(e)}")
+
+@shared_task
+def payroll_webhook_event(data):
+    try:
+        opportunity_id = data.get('id')
+        fetched_opportunity = fetch_opportunity_by_id(opportunity_id)
+
+        opportunity_name = fetched_opportunity.get('name')
+        monetary_value = Decimal(str(fetched_opportunity.get("monetaryValue")))
+        follower_ids = fetched_opportunity.get("followers", [])
+
+        print('followers', follower_ids)
+        is_first_time = False
+        custom_fields = fetched_opportunity.get("customFields", [])
+        for field in custom_fields:
+            if field.get("id") == "agYegyuAdz6FU958UaES":
+                field_value = field.get("fieldValue")
+                if isinstance(field_value, list) and field_value and field_value[0] is True:
+                    is_first_time = True
+                break
+        users_to_pay = []
+
+        # Add users from followers
         for follower_id in follower_ids:
             try:
                 user = GHLUser.objects.get(user_id=follower_id)
+                users_to_pay.append(user)
             except GHLUser.DoesNotExist:
                 print(f"User with ID {follower_id} does not exist.")
                 continue
 
+        # Always add the fixed user (armankhalili85@gmail.com)
+        try:
+            fixed_user = GHLUser.objects.get(email="armankhalili85@gmail.com")
+            users_to_pay.append(fixed_user)
+        except GHLUser.DoesNotExist:
+            print("Fixed user with email armankhalili85@gmail.com not found.")
+
+        print(users_to_pay, 'users')
+
+        for user in users_to_pay:
+            percentage = user.first_time_percentage if is_first_time else user.percentage
             payout_amount = (monetary_value * user.percentage) / Decimal("100.00")
 
             # Ensure unique payout per opportunity-user combo
             Payout.objects.get_or_create(
                 opportunity_id=opportunity_id,
+                opportunity_name=opportunity_name,
                 user=user,
                 defaults={
                     "amount": float(payout_amount)
                 }
             )
+    except Exception as e:
+        print(f"Error handling webhook event: {str(e)}")
+
+
+@shared_task
+def handle_user_create_webhook_event(data, event_type):
+    try:
+        if event_type in ["UserCreate"]:
+            user_id = data.get("id")
+            user, created = GHLUser.objects.update_or_create(
+                user_id=user_id,
+                defaults={
+                    "first_name": data.get("firstName"),
+                    "last_name": data.get("lastName"),
+                    "name": data.get("name"),
+                    "email": data.get("email"),
+                    "phone": data.get("phone"),
+                    "location_id": data.get("locationId"),
+                }
+            )
+            print("User created/updated:", user_id)
     except Exception as e:
         print(f"Error handling webhook event: {str(e)}")

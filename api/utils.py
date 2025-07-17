@@ -78,7 +78,7 @@ def create_product(access_token, location_id, product_name, custom_data):
     return None
 
 
-def create_opportunity(contact_id, name, monetary_value=None):
+def create_opportunity(contact_id, name, monetary_value, is_first_time):
     """
     Create an opportunity in GHL.
 
@@ -88,7 +88,6 @@ def create_opportunity(contact_id, name, monetary_value=None):
         location_id (str): Location ID
         monetary_value (float, optional): Opportunity value
         assigned_to (str, optional): User ID to assign the opportunity to
-        services (list of str, optional): List of service IDs to include (if field is mapped)
 
     Returns:
         dict: Response from GHL API
@@ -104,6 +103,14 @@ def create_opportunity(contact_id, name, monetary_value=None):
         "Version": "2021-07-28"
     }
 
+    customFields = [
+        {
+            'id':"agYegyuAdz6FU958UaES",
+            "key":"is_first_time",
+            "field_value":is_first_time
+        }
+    ]
+
     payload = {
         "contactId": contact_id,
         "name": name,
@@ -111,6 +118,7 @@ def create_opportunity(contact_id, name, monetary_value=None):
         "pipelineId": PIPELINE_ID,  # Your hardcoded pipeline ID
         "pipelineStageId": PIPELINE_STAGE_ID,  # Your hardcoded stage ID
         "status": "open",  # You can change as needed
+        "customFields":customFields
     }
 
     if monetary_value:
@@ -270,7 +278,7 @@ def send_invoice(invoiceId):
         "altId": credentials.location_id,
         "altType":'location',
         "userId": credentials.user_id,
-        "action":'email',
+        "action":'sms_and_email',
         "liveMode":True,
     }
 
@@ -287,3 +295,29 @@ def extract_invoice_id_from_name(opportunity_name):
         return opportunity_name.rsplit(" - ", 1)[-1]
     except Exception:
         return None
+
+def fetch_opportunity_by_id(opportunity_id):
+    """
+    Fetch a single opportunity's details from GHL by ID.
+    """
+    credentials = GHLAuthCredentials.objects.first()
+
+    url = f"https://services.leadconnectorhq.com/opportunities/{opportunity_id}"
+
+    headers = {
+        "Authorization": f"Bearer {credentials.access_token}",
+        "Content-Type": "application/json",
+        "Version": "2021-07-28"
+    }
+
+    try:
+        response = requests.get(url=url, headers=headers)
+        print(response.json(), 'response fetch opp')
+        if response.status_code == 200:
+            return response.json().get("opportunity", {})
+        else:
+            print(f"Failed to fetch opportunity. Status: {response.status_code}")
+            return {}
+    except Exception as e:
+        print(f"Error fetching opportunity by ID: {str(e)}")
+        return {}

@@ -82,6 +82,7 @@ class Job(models.Model):
 
 class Payout(models.Model):
     opportunity_id = models.CharField(max_length=100)
+    opportunity_name = models.CharField(max_length=500, null=True, blank=True)
     user = models.ForeignKey("ghl_auth.GHLUser", on_delete=models.CASCADE, related_name="payouts")
     amount = models.FloatField()
     created_at = models.DateTimeField(auto_now_add=True)
