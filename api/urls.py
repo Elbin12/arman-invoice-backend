@@ -7,6 +7,7 @@ urlpatterns = [
     path("webhook/user-create/", user_create_webhook_handler),
     path("webhook/payroll/", payroll_webhook_handler),
     path('login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('auth/refresh/', TokenRefreshView.as_view()),
     path('services/', ServicesView.as_view()),
     path('contacts/', ContactsView.as_view()),
     path('users/', GHLUserSearchView.as_view()),
