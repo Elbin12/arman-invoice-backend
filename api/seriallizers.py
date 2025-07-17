@@ -3,6 +3,8 @@ from rest_framework import serializers
 from .models import Service, Contact, Job, Payout
 from ghl_auth.models import GHLUser
 
+from datetime import datetime
+
 
 
 class ServiceSerializer(serializers.ModelSerializer):
@@ -49,7 +51,7 @@ class GHLUserPercentageEditSerializer(serializers.ModelSerializer):
 class PayoutSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payout
-        fields = ["opportunity_id", "amount", "created_at"]
+        fields = ["opportunity_id", "opportunity_name", "amount", "created_at"]
 
 
 class PayrollSerializer(serializers.ModelSerializer):
@@ -60,9 +62,33 @@ class PayrollSerializer(serializers.ModelSerializer):
         model = GHLUser
         fields = ["user_id", "name", "email", "percentage", "total_payout", "payouts"]
 
+    def get_filtered_payouts(self, obj):
+        payouts = obj.payouts.all()
+
+        start_date = self.context.get("start_date")
+        end_date = self.context.get("end_date")
+
+        print(start_date, end_date, 'dates')
+
+        if start_date:
+            try:
+                start_date = datetime.fromisoformat(start_date)
+                payouts = payouts.filter(created_at__gte=start_date)
+            except ValueError:
+                pass
+
+        if end_date:
+            try:
+                end_date = datetime.fromisoformat(end_date)
+                payouts = payouts.filter(created_at__lte=end_date)
+            except ValueError:
+                pass
+
+        return payouts
+
     def get_total_payout(self, obj):
         return round(sum(p.amount for p in obj.payouts.all()), 2)
 
     def get_payouts(self, obj):
-        payouts = obj.payouts.all()
+        payouts = self.get_filtered_payouts(obj)
         return PayoutSerializer(payouts, many=True).data

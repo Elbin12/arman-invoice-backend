@@ -96,6 +96,7 @@ class CreateJob(APIView):
         contact_id = request.data.get('contact_id')
         assigned_to = request.data.get('assigned_to')
         name = request.data.get('title')
+        is_first_time = request.data.get('is_first_time')
         credentials = GHLAuthCredentials.objects.first()
         if not credentials:
             return Response({"error": "No GHL credentials configured."}, status=500)
@@ -127,6 +128,7 @@ class CreateJob(APIView):
             contact_id=contact_id,
             name=opportunity_name,
             monetary_value=total,
+            is_first_time=is_first_time
         )
 
         print(ghl_response.get('opportunity').get('id'), 'idddd')
@@ -167,8 +169,14 @@ class GHLUserSearchView(ListAPIView):
 class PayrollView(APIView):
     permission_classes = [IsAdminUser]
     def get(self, request):
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+
         users = GHLUser.objects.prefetch_related("payouts").all().order_by("first_name")
-        serializer = PayrollSerializer(users, many=True)
+        serializer = PayrollSerializer(users, many=True, context={
+            "start_date": start_date,
+            "end_date": end_date
+        })
         return Response(serializer.data)
     
     def put(self, request, user_id):

@@ -71,6 +71,14 @@ def payroll_webhook_event(data):
         follower_ids = fetched_opportunity.get("followers", [])
 
         print('followers', follower_ids)
+        is_first_time = False
+        custom_fields = fetched_opportunity.get("customFields", [])
+        for field in custom_fields:
+            if field.get("id") == "agYegyuAdz6FU958UaES":
+                field_value = field.get("fieldValue")
+                if isinstance(field_value, list) and field_value and field_value[0] is True:
+                    is_first_time = True
+                break
         users_to_pay = []
 
         # Add users from followers
@@ -92,6 +100,7 @@ def payroll_webhook_event(data):
         print(users_to_pay, 'users')
 
         for user in users_to_pay:
+            percentage = user.first_time_percentage if is_first_time else user.percentage
             payout_amount = (monetary_value * user.percentage) / Decimal("100.00")
 
             # Ensure unique payout per opportunity-user combo
