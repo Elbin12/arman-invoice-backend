@@ -73,7 +73,6 @@ def payroll_webhook_event(data):
 
         print('followers', follower_ids)
         is_first_time = False
-        print(is_first_time, 'is_first')
         custom_fields = fetched_opportunity.get("customFields", [])
         for field in custom_fields:
             if field.get("id") == "agYegyuAdz6FU958UaES":
@@ -81,6 +80,7 @@ def payroll_webhook_event(data):
                 if isinstance(field_value, list) and field_value and field_value[0] is True:
                     is_first_time = True
                 break
+        print(is_first_time, 'is_first', assignedTo)
 
         try:
             estimator = GHLUser.objects.get(user_id=assignedTo)
@@ -97,7 +97,7 @@ def payroll_webhook_event(data):
                 }
             )
         except GHLUser.DoesNotExist:
-            print(f"User with ID {assignedTo} does not exist.")
+            print(f"User with ID {assignedTo} for estimator does not exist.")
         
 
         for follower_id in follower_ids:
