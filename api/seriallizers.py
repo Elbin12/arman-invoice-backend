@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .models import Service, Contact, Job, Payout
-from ghl_auth.models import GHLUser
+from ghl_auth.models import GHLUser, CommissionRule
 
 from datetime import datetime
 from pytz import timezone, UTC
@@ -49,6 +49,15 @@ class GHLUserPercentageEditSerializer(serializers.ModelSerializer):
         model = GHLUser
         fields = ["percentage"]
 
+class CommissionRuleEditSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CommissionRule
+        fields = ["num_other_employees", "commission_percentage"]
+
+class CommissionRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CommissionRule
+        fields = ['num_other_employees', 'commission_percentage']
 
 class PayoutSerializer(serializers.ModelSerializer):
     created_at = serializers.SerializerMethodField()
@@ -64,10 +73,11 @@ class PayoutSerializer(serializers.ModelSerializer):
 class PayrollSerializer(serializers.ModelSerializer):
     total_payout = serializers.SerializerMethodField()
     payouts = serializers.SerializerMethodField()
+    commission_rules = CommissionRuleSerializer(many=True, read_only=True)
 
     class Meta:
         model = GHLUser
-        fields = ["user_id", "name", "email", "percentage", "total_payout", "payouts"]
+        fields = ["user_id", "name", "email", "percentage", "total_payout", "payouts", "commission_rules"]
 
     def get_filtered_payouts(self, obj):
         payouts = obj.payouts.all()

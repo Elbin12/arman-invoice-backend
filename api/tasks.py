@@ -5,7 +5,7 @@ from django.conf import settings
 from decimal import Decimal
 
 from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id
-from ghl_auth.models import GHLUser
+from ghl_auth.models import GHLUser, CommissionRule
 from .models import Payout
 
 GHL_CLIENT_ID = settings.GHL_CLIENT_ID
@@ -84,7 +84,7 @@ def payroll_webhook_event(data):
 
         try:
             estimator = GHLUser.objects.get(user_id=assignedTo)
-            percentage = 5 if is_first_time else 2
+            percentage = 15 if is_first_time else 2
             payout_amount = (monetary_value * percentage) / Decimal("100.00")
 
             # Ensure unique payout per opportunity-user combo
@@ -99,7 +99,8 @@ def payroll_webhook_event(data):
         except GHLUser.DoesNotExist:
             print(f"User with ID {assignedTo} for estimator does not exist.")
         
-
+        followers_count = len(follower_ids)
+        num_other_employees = followers_count-1
         for follower_id in follower_ids:
             try:
                 user = GHLUser.objects.get(user_id=follower_id)
@@ -107,17 +108,26 @@ def payroll_webhook_event(data):
                 print(f"User with ID {follower_id} does not exist.")
                 continue
 
-            payout_amount = (monetary_value * user.percentage) / Decimal("100.00")
+            try:
+                if num_other_employees == 0:
+                    # Use flat_percentage stored in GHLUser
+                    payout_amount = (monetary_value * user.percentage) / Decimal("100.00")
+                else:
+                    commission = CommissionRule.objects.get(ghl_user=user, num_other_employees=num_other_employees)
+                    payout_amount = (monetary_value * commission.commission_percentage) / Decimal("100.00")
 
-            # Ensure unique payout per opportunity-user combo
-            Payout.objects.get_or_create(
-                opportunity_id=opportunity_id,
-                opportunity_name=opportunity_name,
-                user=user,
-                defaults={
-                    "amount": float(payout_amount)
-                }
-            )
+                # Ensure unique payout per opportunity-user combo
+                Payout.objects.get_or_create(
+                    opportunity_id=opportunity_id,
+                    opportunity_name=opportunity_name,
+                    user=user,
+                    defaults={
+                        "amount": float(payout_amount)
+                    }
+                )
+            except CommissionRule.DoesNotExist:
+                print(f"commission not found for {follower_id} with {num_other_employees} other employees")
+                continue
     except Exception as e:
         print(f"Error handling webhook event: {str(e)}")
 

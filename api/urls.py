@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
-from .views import ServicesView, ContactsView, GHLUserSearchView, CreateJob, PayrollView, webhook_handler, user_create_webhook_handler, payroll_webhook_handler
+from .views import ServicesView, ContactsView, GHLUserSearchView, CreateJob, PayrollView, CommissionRuleUpdateView, webhook_handler, user_create_webhook_handler, payroll_webhook_handler
 
 urlpatterns = [
     path("webhook/", webhook_handler),
@@ -14,4 +14,5 @@ urlpatterns = [
     path('create/job/', CreateJob.as_view()),
     path('payroll/', PayrollView.as_view()),
     path("payroll/<str:user_id>/", PayrollView.as_view(), name="percentage-update"),
+    path("payroll/commission/<str:user_id>/", CommissionRuleUpdateView.as_view()),
 ]
