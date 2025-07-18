@@ -10,8 +10,8 @@ from django.db.models import Q
 
 
 from .models import Service, Contact, Job, WebhookLog
-from ghl_auth.models import GHLAuthCredentials, GHLUser
-from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, GHLUserPercentageEditSerializer
+from ghl_auth.models import GHLAuthCredentials, GHLUser, CommissionRule
+from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, GHLUserPercentageEditSerializer, CommissionRuleEditSerializer
 from .utils import create_opportunity, create_invoice, add_followers
 from .tasks import handle_webhook_event, handle_user_create_webhook_event, payroll_webhook_event
 
@@ -207,4 +207,36 @@ class PayrollView(APIView):
                 "message": "Percentage updated",
                 "percentage": serializer.data
             })
+        return Response(serializer.errors, status=400)
+    
+class CommissionRuleUpdateView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def put(self, request, user_id):
+        """
+        Edit or add commission rules for a given user.
+        """
+        try:
+            user = GHLUser.objects.get(user_id=user_id)
+        except GHLUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+
+        rules_data = request.data.get("commission_rules", [])
+        if not rules_data:
+            return Response({"error":"commission rules are required"}, status=400)
+        if not isinstance(rules_data, list):
+            return Response({"error": "commission_rules must be a list"}, status=400)
+
+        serializer = CommissionRuleEditSerializer(data=rules_data, many=True)
+        if serializer.is_valid():
+            for item in serializer.validated_data:
+                num_employees = item["num_other_employees"]
+                percentage = item["commission_percentage"]
+
+                rule, created = CommissionRule.objects.update_or_create(
+                    ghl_user=user,
+                    num_other_employees=num_employees,
+                    defaults={"commission_percentage": percentage}
+                )
+            return Response({"message": "Commission rules updated", "data":serializer.data}, status=200)
         return Response(serializer.errors, status=400)

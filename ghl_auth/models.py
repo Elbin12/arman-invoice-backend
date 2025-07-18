@@ -29,3 +29,11 @@ class GHLUser(models.Model):
 
     def __str__(self):
         return self.name
+    
+class CommissionRule(models.Model):
+    ghl_user = models.ForeignKey(GHLUser, on_delete=models.CASCADE, related_name='commission_rules')
+    num_other_employees = models.IntegerField(help_text="0 means working alone")
+    commission_percentage = models.DecimalField(decimal_places=2, max_digits=5)
+
+    class Meta:
+        unique_together = ['ghl_user', 'num_other_employees']
