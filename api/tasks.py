@@ -100,7 +100,10 @@ def payroll_webhook_event(data):
             print(f"User with ID {assignedTo} for estimator does not exist.")
         
         followers_count = len(follower_ids)
+        print(followers_count, 'followers_count')
         num_other_employees = followers_count-1
+        print(num_other_employees, 'num_other_employees')
+        
         for follower_id in follower_ids:
             try:
                 user = GHLUser.objects.get(user_id=follower_id)
