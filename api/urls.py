@@ -15,4 +15,5 @@ urlpatterns = [
     path('payroll/', views.PayrollView.as_view()),
     path("payroll/<str:user_id>/", views.PayrollView.as_view(), name="percentage-update"),
     path("payroll/commission/<str:user_id>/", views.CommissionRuleUpdateView.as_view()),
+    path('commissions/<str:user_id>/<int:commission_id>/', views.CommissionRuleUpdateView.as_view()),
 ]

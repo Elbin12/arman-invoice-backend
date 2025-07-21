@@ -255,18 +255,38 @@ class CommissionRuleUpdateView(APIView):
             return Response({"error": "commission_rules must be a list"}, status=400)
 
         serializer = CommissionRuleEditSerializer(data=rules_data, many=True)
-        if serializer.is_valid():
-            for item in serializer.validated_data:
-                num_employees = item["num_other_employees"]
-                percentage = item["commission_percentage"]
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+        
+        # Only collect submitted IDs for updating existing rules
+        submitted_ids = [item.get("id") for item in serializer.validated_data if item.get("id")]
 
-                rule, created = CommissionRule.objects.update_or_create(
-                    ghl_user=user,
-                    num_other_employees=num_employees,
-                    defaults={"commission_percentage": percentage}
-                )
-            return Response({"message": "Commission rules updated", "data":serializer.data}, status=200)
-        return Response(serializer.errors, status=400)
+        # DELETE rules not in the new list
+        CommissionRule.objects.filter(ghl_user=user).exclude(id__in=submitted_ids).delete()
+        for item in serializer.validated_data:
+            num_employees = item["num_other_employees"]
+            percentage = item["commission_percentage"]
+
+            rule, created = CommissionRule.objects.update_or_create(
+                ghl_user=user,
+                num_other_employees=num_employees,
+                defaults={"commission_percentage": percentage}
+            )
+        return Response({"message": "Commission rules updated", "data":serializer.data}, status=200)
+    
+    def delete(self, request, user_id, commission_id):
+        try:
+            user = GHLUser.objects.get(user_id=user_id)
+        except GHLUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+
+        try:
+            rule = CommissionRule.objects.get(id=commission_id, ghl_user=user)
+        except CommissionRule.DoesNotExist:
+            return Response({"error": "Commission rule not found for this user."}, status=404)
+
+        rule.delete()
+        return Response({"message": "Commission rule deleted successfully."}, status=200)
 
 
 class CreateJobValidations(APIView):
@@ -297,7 +317,7 @@ class CreateJobValidations(APIView):
 
             if rule:
                 messages.append(
-                    f"{rule.percentage}% for {user.first_name} (working with {num_other_employees} other(s))."
+                    f"{rule.commission_percentage}% for {user.first_name} (working with {num_other_employees} other(s))."
                 )
             elif num_other_employees == 0 and user.percentage is not None:
                 messages.append(
