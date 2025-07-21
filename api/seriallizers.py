@@ -3,7 +3,7 @@ from rest_framework import serializers
 from .models import Service, Contact, Job, Payout
 from ghl_auth.models import GHLUser, CommissionRule
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pytz import timezone, UTC
 from django.utils.timezone import localtime
 
@@ -98,6 +98,7 @@ class PayrollSerializer(serializers.ModelSerializer):
         if end_date:
             try:
                 end_date = datetime.fromisoformat(end_date)
+                end_date = end_date + timedelta(days=1) - timedelta(microseconds=1)
                 end_date = chicago_tz.localize(end_date).astimezone(UTC)
                 payouts = payouts.filter(created_at__lte=end_date)
             except ValueError:
@@ -106,7 +107,8 @@ class PayrollSerializer(serializers.ModelSerializer):
         return payouts
 
     def get_total_payout(self, obj):
-        return round(sum(p.amount for p in obj.payouts.all()), 2)
+        payouts = self.get_filtered_payouts(obj)
+        return round(sum(p.amount for p in payouts), 2)
 
     def get_payouts(self, obj):
         payouts = self.get_filtered_payouts(obj)

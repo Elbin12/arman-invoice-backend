@@ -1,18 +1,18 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
-from .views import ServicesView, ContactsView, GHLUserSearchView, CreateJob, PayrollView, CommissionRuleUpdateView, webhook_handler, user_create_webhook_handler, payroll_webhook_handler
-
+from . import views
 urlpatterns = [
-    path("webhook/", webhook_handler),
-    path("webhook/user-create/", user_create_webhook_handler),
-    path("webhook/payroll/", payroll_webhook_handler),
+    path("webhook/", views.webhook_handler),
+    path("webhook/user-create/", views.user_create_webhook_handler),
+    path("webhook/payroll/", views.payroll_webhook_handler),
     path('login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/refresh/', TokenRefreshView.as_view()),
-    path('services/', ServicesView.as_view()),
-    path('contacts/', ContactsView.as_view()),
-    path('users/', GHLUserSearchView.as_view()),
-    path('create/job/', CreateJob.as_view()),
-    path('payroll/', PayrollView.as_view()),
-    path("payroll/<str:user_id>/", PayrollView.as_view(), name="percentage-update"),
-    path("payroll/commission/<str:user_id>/", CommissionRuleUpdateView.as_view()),
+    path('services/', views.ServicesView.as_view()),
+    path('contacts/', views.ContactsView.as_view()),
+    path('users/', views.GHLUserSearchView.as_view()),
+    path('create/job/', views.CreateJob.as_view()),
+    path('create/job/validations/', views.CreateJobValidations.as_view()),
+    path('payroll/', views.PayrollView.as_view()),
+    path("payroll/<str:user_id>/", views.PayrollView.as_view(), name="percentage-update"),
+    path("payroll/commission/<str:user_id>/", views.CommissionRuleUpdateView.as_view()),
 ]
