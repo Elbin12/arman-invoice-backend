@@ -100,6 +100,33 @@ class CreateJob(APIView):
         credentials = GHLAuthCredentials.objects.first()
         if not credentials:
             return Response({"error": "No GHL credentials configured."}, status=500)
+        
+        assigned_to_ids = assigned_to if isinstance(assigned_to, list) else [assigned_to]
+        num_other_employees = len(assigned_to_ids)-1
+
+        for user_id in assigned_to_ids:
+            try:
+                user = GHLUser.objects.get(user_id=user_id)
+            except GHLUser.DoesNotExist:
+                return Response({"error": f"User with ID {user_id} not found."}, status=400)
+            
+            # Check commission rule
+            rule = CommissionRule.objects.filter(ghl_user=user, num_other_employees=num_other_employees).first()
+
+            if rule:
+                continue  # Valid rule exists
+            
+            # If no rule but 0 user, check flat_percentage
+            if num_other_employees == 0 and user.percentage is not None:
+                if user.percentage is not None:
+                    continue  # Valid flat_percentage
+                else:
+                    return Response({
+                        "error": f"Please set the flat commission percentage for {user.first_name} {user.last_name} when working alone."
+                    }, status=400)
+            return Response({
+                "error": f"No commission rule for user {user.first_name} {user.last_name} when working with {num_other_employees} other(s)."
+            }, status=400)
 
         # You need to fetch service info from DB or pass it in request
         services = request.data.get("service")  # Expects a list of dicts
@@ -240,3 +267,49 @@ class CommissionRuleUpdateView(APIView):
                 )
             return Response({"message": "Commission rules updated", "data":serializer.data}, status=200)
         return Response(serializer.errors, status=400)
+
+
+class CreateJobValidations(APIView):
+    authentication_classes = []
+    permission_classes = []
+    def post(self, request):
+        assigned_to = request.data.get('assigned_to')
+        assigned_to_ids = assigned_to if isinstance(assigned_to, list) else [assigned_to]
+        num_other_employees = len(assigned_to_ids)-1
+
+        messages = []
+        success = True
+
+        if not assigned_to:
+            return Response({"error": "Assigned users cannot be empty."}, status=400)
+
+        for user_id in assigned_to_ids:
+            try:
+                user = GHLUser.objects.get(user_id=user_id)
+            except GHLUser.DoesNotExist:
+                messages.append(f"User with ID {user_id} not found.")
+                success = False
+                continue
+
+            rule = CommissionRule.objects.filter(
+                ghl_user=user, num_other_employees=num_other_employees
+            ).first()
+
+            if rule:
+                messages.append(
+                    f"{rule.percentage}% for {user.first_name} (working with {num_other_employees} other(s))."
+                )
+            elif num_other_employees == 0 and user.percentage is not None:
+                messages.append(
+                    f"{user.percentage}% for {user.first_name} (working alone)."
+                )
+            else:
+                messages.append(
+                    f"No commission rule for {user.first_name} (working with {num_other_employees} other(s))."
+                )
+                success = False
+
+        return Response({
+            "success": success,
+            "messages": messages
+        })
