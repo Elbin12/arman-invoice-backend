@@ -57,7 +57,7 @@ class CommissionRuleEditSerializer(serializers.ModelSerializer):
 class CommissionRuleSerializer(serializers.ModelSerializer):
     class Meta:
         model = CommissionRule
-        fields = ['num_other_employees', 'commission_percentage']
+        fields = ['id', 'num_other_employees', 'commission_percentage']
 
 class PayoutSerializer(serializers.ModelSerializer):
     created_at = serializers.SerializerMethodField()

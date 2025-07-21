@@ -267,6 +267,20 @@ class CommissionRuleUpdateView(APIView):
                 )
             return Response({"message": "Commission rules updated", "data":serializer.data}, status=200)
         return Response(serializer.errors, status=400)
+    
+    def delete(self, request, user_id, commission_id):
+        try:
+            user = GHLUser.objects.get(user_id=user_id)
+        except GHLUser.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+
+        try:
+            rule = CommissionRule.objects.get(id=commission_id, ghl_user=user)
+        except CommissionRule.DoesNotExist:
+            return Response({"error": "Commission rule not found for this user."}, status=404)
+
+        rule.delete()
+        return Response({"message": "Commission rule deleted successfully."}, status=200)
 
 
 class CreateJobValidations(APIView):
