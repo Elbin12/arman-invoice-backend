@@ -8,6 +8,8 @@ from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportun
 from ghl_auth.models import GHLUser, CommissionRule
 from .models import Payout
 
+from decimal import Decimal, ROUND_HALF_UP
+
 GHL_CLIENT_ID = settings.GHL_CLIENT_ID
 GHL_CLIENT_SECRET = settings.GHL_CLIENT_SECRET
 
@@ -86,6 +88,7 @@ def payroll_webhook_event(data):
             estimator = GHLUser.objects.get(user_id=assignedTo)
             percentage = 15 if is_first_time else 2
             payout_amount = (monetary_value * percentage) / Decimal("100.00")
+            payout_amount = payout_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
             # Ensure unique payout per opportunity-user combo
             Payout.objects.get_or_create(
@@ -93,7 +96,7 @@ def payroll_webhook_event(data):
                 opportunity_name=opportunity_name,
                 user=estimator,
                 defaults={
-                    "amount": float(payout_amount)
+                    "amount": payout_amount
                 }
             )
         except GHLUser.DoesNotExist:
@@ -103,7 +106,7 @@ def payroll_webhook_event(data):
         print(followers_count, 'followers_count')
         num_other_employees = followers_count-1
         print(num_other_employees, 'num_other_employees')
-        
+
         for follower_id in follower_ids:
             try:
                 user = GHLUser.objects.get(user_id=follower_id)
@@ -115,6 +118,7 @@ def payroll_webhook_event(data):
                 if num_other_employees == 0:
                     # Use flat_percentage stored in GHLUser
                     payout_amount = (monetary_value * user.percentage) / Decimal("100.00")
+                    payout_amount = payout_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 else:
                     commission = CommissionRule.objects.get(ghl_user=user, num_other_employees=num_other_employees)
                     payout_amount = (monetary_value * commission.commission_percentage) / Decimal("100.00")
@@ -125,7 +129,7 @@ def payroll_webhook_event(data):
                     opportunity_name=opportunity_name,
                     user=user,
                     defaults={
-                        "amount": float(payout_amount)
+                        "amount": payout_amount
                     }
                 )
             except CommissionRule.DoesNotExist:
