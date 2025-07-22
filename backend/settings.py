@@ -30,7 +30,7 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['13.58.139.11', '127.0.0.1']
+ALLOWED_HOSTS = ['13.58.139.11', '127.0.0.1', 'workorder.theservicepilot.com']
 
 
 # Application definition
@@ -65,6 +65,7 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://13.58.139.11"
 ]
+
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
@@ -118,6 +119,8 @@ DATABASES = {
         'PORT': '5432',
     }
 }
+
+
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
