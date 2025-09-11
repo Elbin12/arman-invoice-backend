@@ -3,12 +3,14 @@ from celery import shared_task
 from ghl_auth.models import GHLAuthCredentials
 from django.conf import settings
 from decimal import Decimal
+from datetime import datetime
 
-from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id
+from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id, search_ghl_contact, create_invoice
 from ghl_auth.models import GHLUser, CommissionRule
 from .models import Payout
 
 from decimal import Decimal, ROUND_HALF_UP
+
 
 GHL_CLIENT_ID = settings.GHL_CLIENT_ID
 GHL_CLIENT_SECRET = settings.GHL_CLIENT_SECRET
@@ -49,16 +51,41 @@ def make_api_call():
 @shared_task
 def handle_webhook_event(data):
     try:
-        opportunity_name = data.get('opportunity_name')
-        invoice_id = extract_invoice_id_from_name(opportunity_name)
+        customer_email = data.get("customer_email")
+        customer_name = data.get("customer_name")
+        services = data.get("selected_services", [])
 
-        print('sendinggg', invoice_id)
-        if invoice_id:
-            send_invoice(invoice_id)
-            print('sent')
-        else:
-            print(f"Invoice ID could not be extracted from opportunity name: {opportunity_name}")
+        if not customer_email:
+            print("No customer email in webhook payload.")
+            return {"error": "Customer email missing"}
+        
+        credentials = GHLAuthCredentials.objects.first()
 
+        # Search contact
+        contacts = search_ghl_contact(credentials.access_token, customer_email, credentials.location_id)
+        if not contacts:
+            print(f"No GHL contact found for email: {customer_email}")
+            return {"error": f"Contact not found for {customer_email}"}
+
+        contact_id = contacts[0].get("id") or contacts[0].get("_id")
+        if not contact_id:
+            print("Contact found, but ID missing.")
+            return {"error": "Invalid contact data"}
+        
+        print("Contact found,", contact_id)
+        # Invoice name
+        invoice_name = f"Invoice for {customer_name or customer_email} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+        # Create invoice
+        response = create_invoice(
+            name=invoice_name,
+            contact_id=contact_id,
+            services=services,
+            credentials=credentials
+        )
+
+        print("Invoice response:", response)
+        return response
     except Exception as e:
         print(f"Error handling webhook event: {str(e)}")
 

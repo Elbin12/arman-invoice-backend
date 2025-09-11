@@ -45,7 +45,7 @@ def create_product(access_token, location_id, product_name, custom_data):
     }
 
     try:
-        price = float(custom_data.get("Price", 0))
+        price = float(custom_data.get("price", 0))
     except (ValueError, TypeError):
         price = 0.0
 
@@ -167,6 +167,8 @@ def create_invoice(name, contact_id, services, credentials):
 
     for service in services:
         product_name = service.get("name", "Unnamed Service")
+        print("Processing service:", product_name)  # DEBUG
+
         product_info = get_or_create_product(
             credentials.access_token,
             credentials.location_id,
@@ -174,25 +176,32 @@ def create_invoice(name, contact_id, services, credentials):
             custom_data=service
         )
         if not product_info:
-            return {"error": f"Failed to get/create product for service: {product_name}"}
+            print(f"Skipping service: {product_name} (no product info)")
+            continue  # <-- change return to continue, so other services are still added
 
-        line_items.append({
+        line_item = {
             "name": product_name,
             "description": service.get("description", ""),
             "currency": "USD",
             "qty": service.get("quantity", 1),
             "amount": service.get("price", 0.0),
             "productId": product_info["productId"],
-            "taxes": [
+        }
+
+        if service.get("price", 0.0) > 0:
+            line_item["taxes"] = [
                 {
-                    "_id": "sales-tax-8-25",  # Your custom identifier
+                    "_id": "sales-tax-8-25",
                     "name": "Sales Tax",
                     "rate": 8.25,
                     "calculation": "exclusive",
-                    "description": f"8.25% standard US sales tax"
+                    "description": "8.25% standard US sales tax"
                 }
             ]
-        })
+
+        line_items.append(line_item)
+
+    print("Final line_items payload:", line_items)  # DEBUG
 
     discount= {
         "value":0,
@@ -321,3 +330,18 @@ def fetch_opportunity_by_id(opportunity_id):
     except Exception as e:
         print(f"Error fetching opportunity by ID: {str(e)}")
         return {}
+
+
+def search_ghl_contact(access_token, email, locationId):
+    url = 'https://services.leadconnectorhq.com/contacts/'
+    response = requests.get(
+        url,
+        headers={
+            'Accept': 'application/json',
+            'Authorization': f"Bearer {access_token}",
+            'Version': '2021-07-28'
+        },
+        params={"query": email, "locationId": locationId}
+    )
+    print("Raw response:", response.status_code, response.text, response.json())
+    return response.json().get("contacts", [])
