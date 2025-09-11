@@ -5,7 +5,7 @@ from django.conf import settings
 from decimal import Decimal
 from datetime import datetime
 
-from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id, search_ghl_contact, create_invoice
+from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id, search_ghl_contact, create_invoice, update_contact
 from ghl_auth.models import GHLUser, CommissionRule
 from .models import Payout
 
@@ -54,6 +54,7 @@ def handle_webhook_event(data):
         customer_email = data.get("customer_email")
         customer_name = data.get("customer_name")
         services = data.get("selected_services", [])
+        customer_address = data.get("customer_address")
 
         if not customer_email:
             print("No customer email in webhook payload.")
@@ -68,6 +69,7 @@ def handle_webhook_event(data):
             return {"error": f"Contact not found for {customer_email}"}
 
         contact_id = contacts[0].get("id") or contacts[0].get("_id")
+        tags = contacts[0].get("tags")
         if not contact_id:
             print("Contact found, but ID missing.")
             return {"error": "Invalid contact data"}
@@ -81,10 +83,23 @@ def handle_webhook_event(data):
             name=invoice_name,
             contact_id=contact_id,
             services=services,
-            credentials=credentials
+            credentials=credentials,
+            customer_address=customer_address
         )
 
         print("Invoice response:", response)
+        # If invoice successfully created, update contact
+        # if response and not response.get("error"):
+        #     existing_tags = tags if isinstance(tags, list) else []
+            
+        #     # Avoid duplicates
+        #     updated_tags = list(set(existing_tags + ["Invoice Created"]))
+        #     payload = {
+        #         "tags": updated_tags
+        #     }
+        #     update_resp = update_contact(contact_id, payload)
+        #     print("Contact update response:", update_resp)
+        #     return {"invoice": response, "contact_update": update_resp}
         return response
     except Exception as e:
         print(f"Error handling webhook event: {str(e)}")

@@ -138,7 +138,7 @@ def create_opportunity(contact_id, name, monetary_value, is_first_time):
 
     return response.json()
 
-def create_invoice(name, contact_id, services, credentials):
+def create_invoice(name, contact_id, services, credentials, customer_address):
     """
     Create an invoice in GHL for the given contact.
 
@@ -211,7 +211,8 @@ def create_invoice(name, contact_id, services, credentials):
     contactDetails = {
         "id":contact_id,
         "name": contact.first_name,
-        "email": contact.email
+        "email": contact.email,
+        "address":{"addressLine1":customer_address}
     }
 
     businessDetails = {
@@ -345,3 +346,22 @@ def search_ghl_contact(access_token, email, locationId):
     )
     print("Raw response:", response.status_code, response.text, response.json())
     return response.json().get("contacts", [])
+
+def update_contact(contact_id, data):
+    url = f'https://services.leadconnectorhq.com/contacts/{contact_id}'
+    credentials = GHLAuthCredentials.objects.first()
+    print(credentials, 'creee')
+
+    headers = {
+        'Authorization': f'Bearer {credentials.access_token}',
+        'Content-Type': 'application/json',
+        'Version':'2021-07-28'
+    }
+
+    try:
+        response = requests.put(url, headers=headers, json=data)
+        print(response.json(), 'responseeeeee')
+        return response.json()
+    except Exception as e:
+        print(e, 'errorrr')
+        return {'error':'Error while updating ghl contact'}
