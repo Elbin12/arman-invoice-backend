@@ -89,17 +89,17 @@ def handle_webhook_event(data):
 
         print("Invoice response:", response)
         # If invoice successfully created, update contact
-        # if response and not response.get("error"):
-        #     existing_tags = tags if isinstance(tags, list) else []
+        if response and not response.get("error"):
+            existing_tags = tags if isinstance(tags, list) else []
             
-        #     # Avoid duplicates
-        #     updated_tags = list(set(existing_tags + ["Invoice Created"]))
-        #     payload = {
-        #         "tags": updated_tags
-        #     }
-        #     update_resp = update_contact(contact_id, payload)
-        #     print("Contact update response:", update_resp)
-        #     return {"invoice": response, "contact_update": update_resp}
+            # Avoid duplicates
+            updated_tags = list(set(existing_tags + ["Invoice Created"]))
+            payload = {
+                "tags": updated_tags
+            }
+            update_resp = update_contact(contact_id, payload)
+            print("Contact update response:", update_resp)
+            return {"invoice": response, "contact_update": update_resp}
         return response
     except Exception as e:
         print(f"Error handling webhook event: {str(e)}")
