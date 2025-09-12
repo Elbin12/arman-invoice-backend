@@ -90,6 +90,15 @@ def handle_webhook_event(data):
         print("Invoice response:", response)
         # If invoice successfully created, update contact
         if response and not response.get("error"):
+            invoice_id = response.get("_id")
+
+            if "card authorized" not in [t.lower() for t in tags]:
+                print("Card not authorized → sending invoice...")
+                send_resp = send_invoice(invoice_id)
+                print("Send invoice response:", send_resp)
+            else:
+                print("Card authorized → skipping invoice send.")
+
             existing_tags = tags if isinstance(tags, list) else []
             
             # Avoid duplicates
@@ -99,7 +108,11 @@ def handle_webhook_event(data):
             }
             update_resp = update_contact(contact_id, payload)
             print("Contact update response:", update_resp)
-            return {"invoice": response, "contact_update": update_resp}
+            return {
+                "invoice": response,
+                "contact_update": update_resp,
+                "invoice_send": send_resp if "card authorized" not in [t.lower() for t in tags] else "skipped"
+            }
         return response
     except Exception as e:
         print(f"Error handling webhook event: {str(e)}")
