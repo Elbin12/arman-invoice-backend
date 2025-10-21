@@ -1,4 +1,4 @@
-import requests
+import requests, logging
 from celery import shared_task
 from ghl_auth.models import GHLAuthCredentials
 from django.conf import settings
@@ -15,26 +15,89 @@ from decimal import Decimal, ROUND_HALF_UP
 GHL_CLIENT_ID = settings.GHL_CLIENT_ID
 GHL_CLIENT_SECRET = settings.GHL_CLIENT_SECRET
 
+logger = logging.getLogger(__name__)
+
+# @shared_task
+# def make_api_call():
+#     tokens = GHLAuthCredentials.objects.all()
+
+#     for credentials in tokens:
+    
+#         print("credentials tokenL", credentials)
+#         refresh_token = credentials.refresh_token
+
+        
+#         response = requests.post('https://services.leadconnectorhq.com/oauth/token', data={
+#             'grant_type': 'refresh_token',
+#             'client_id': GHL_CLIENT_ID,
+#             'client_secret': GHL_CLIENT_SECRET,
+#             'refresh_token': refresh_token
+#         })
+        
+#         new_tokens = response.json()
+#         obj, created = GHLAuthCredentials.objects.update_or_create(
+#                 location_id= new_tokens.get("locationId"),
+#                 defaults={
+#                     "access_token": new_tokens.get("access_token"),
+#                     "refresh_token": new_tokens.get("refresh_token"),
+#                     "expires_in": new_tokens.get("expires_in"),
+#                     "scope": new_tokens.get("scope"),
+#                     "user_type": new_tokens.get("userType"),
+#                     "company_id": new_tokens.get("companyId"),
+#                     "user_id":new_tokens.get("userId"),
+#                 }
+#             )
+#         print(response, 'responseee', new_tokens)
+#         print("refreshed: ", obj)
+
 @shared_task
 def make_api_call():
+    """Refresh OAuth tokens for all GHL credentials"""
     tokens = GHLAuthCredentials.objects.all()
+    
+    if not tokens.exists():
+        logger.warning("No GHL credentials found to refresh")
+        return
 
     for credentials in tokens:
-    
-        print("credentials tokenL", credentials)
-        refresh_token = credentials.refresh_token
+        try:
+            logger.info(f"Refreshing token for location: {credentials.location_id}")
+            refresh_token = credentials.refresh_token
 
-        
-        response = requests.post('https://services.leadconnectorhq.com/oauth/token', data={
-            'grant_type': 'refresh_token',
-            'client_id': GHL_CLIENT_ID,
-            'client_secret': GHL_CLIENT_SECRET,
-            'refresh_token': refresh_token
-        })
-        
-        new_tokens = response.json()
-        obj, created = GHLAuthCredentials.objects.update_or_create(
-                location_id= new_tokens.get("locationId"),
+            # Make the refresh request
+            response = requests.post(
+                'https://services.leadconnectorhq.com/oauth/token',
+                data={
+                    'grant_type': 'refresh_token',
+                    'client_id': GHL_CLIENT_ID,
+                    'client_secret': GHL_CLIENT_SECRET,
+                    'refresh_token': refresh_token
+                },
+                timeout=10  # Add timeout
+            )
+            
+            # Check if request was successful
+            if response.status_code != 200:
+                logger.error(
+                    f"Token refresh failed for location {credentials.location_id}. "
+                    f"Status: {response.status_code}, Response: {response.text}"
+                )
+                continue
+            
+            # Parse response
+            new_tokens = response.json()
+            
+            # Validate response contains required fields
+            if 'access_token' not in new_tokens or 'refresh_token' not in new_tokens:
+                logger.error(
+                    f"Invalid token response for location {credentials.location_id}: "
+                    f"{new_tokens}"
+                )
+                continue
+            
+            # Update credentials
+            obj, created = GHLAuthCredentials.objects.update_or_create(
+                location_id=new_tokens.get("locationId"),
                 defaults={
                     "access_token": new_tokens.get("access_token"),
                     "refresh_token": new_tokens.get("refresh_token"),
@@ -42,10 +105,28 @@ def make_api_call():
                     "scope": new_tokens.get("scope"),
                     "user_type": new_tokens.get("userType"),
                     "company_id": new_tokens.get("companyId"),
-                    "user_id":new_tokens.get("userId"),
+                    "user_id": new_tokens.get("userId"),
                 }
             )
-        print("refreshed: ", obj)
+            
+            action = "created" if created else "updated"
+            logger.info(
+                f"Successfully {action} credentials for location {obj.location_id}"
+            )
+
+            logger.info(
+                f"Status: {response.status_code}, Response: {response.text}"
+            )
+            
+        except requests.RequestException as e:
+            logger.error(
+                f"Network error refreshing token for location {credentials.location_id}: {e}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Unexpected error refreshing token for location {credentials.location_id}: {e}",
+                exc_info=True
+            )
 
 
 @shared_task

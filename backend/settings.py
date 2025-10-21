@@ -232,6 +232,6 @@ PIPELINE_STAGE_ID = os.getenv("PIPELINE_STAGE_ID")
 CELERY_BEAT_SCHEDULE = {
     'make-api-call-every-minute': {
         'task': 'api.tasks.make_api_call',
-        'schedule': timedelta(hours=10)
+        'schedule': timedelta(minutes=1)
     },
 }
