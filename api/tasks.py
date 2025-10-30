@@ -153,6 +153,8 @@ def handle_webhook_event(data):
 
         # bussinessName = None
         companyName = contacts[0].get("companyName")
+        phoneNo = contacts[0].get("phone")
+        contactName = contacts[0].get("contactName")
         # if businessId:
         #     print(f"Contact belongs to businessId: {businessId}.")
         #     business_info = getBussiness(credentials.access_token, businessId)
@@ -175,7 +177,9 @@ def handle_webhook_event(data):
             services=services,
             credentials=credentials,
             customer_address=customer_address,
-            companyName=companyName
+            companyName=companyName,
+            phoneNo=phoneNo,
+            contactName=contactName,
         )
 
         print("Invoice response:", response)

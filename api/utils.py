@@ -138,7 +138,7 @@ def create_opportunity(contact_id, name, monetary_value, is_first_time):
 
     return response.json()
 
-def create_invoice(name, contact_id, services, credentials, customer_address, companyName):
+def create_invoice(name, contact_id, services, credentials, customer_address, companyName, phoneNo, contactName):
     """
     Create an invoice in GHL for the given contact.
 
@@ -210,10 +210,11 @@ def create_invoice(name, contact_id, services, credentials, customer_address, co
 
     contactDetails = {
         "id":contact_id,
-        "name": contact.first_name,
+        "name": contactName,
         "email": contact.email,
         "address":{"addressLine1":customer_address},
-        "companyName": companyName
+        "companyName": companyName,
+        "phoneNo": phoneNo
     }
 
     businessDetails = {
