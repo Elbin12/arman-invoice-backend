@@ -5,7 +5,7 @@ from django.conf import settings
 from decimal import Decimal
 from datetime import datetime
 
-from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id, search_ghl_contact, create_invoice, update_contact
+from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id, search_ghl_contact, create_invoice, update_contact, getBussiness
 from ghl_auth.models import GHLUser, CommissionRule
 from .models import Payout
 
@@ -150,6 +150,15 @@ def handle_webhook_event(data):
             return {"error": f"Contact not found for {customer_email}"}
 
         contact_id = contacts[0].get("id") or contacts[0].get("_id")
+
+        # bussinessName = None
+        companyName = contacts[0].get("companyName")
+        # if businessId:
+        #     print(f"Contact belongs to businessId: {businessId}.")
+        #     business_info = getBussiness(credentials.access_token, businessId)
+        #     bussinessName = business_info.get("name")
+
+        print("companyName", companyName)
         tags = contacts[0].get("tags")
         if not contact_id:
             print("Contact found, but ID missing.")
@@ -165,7 +174,8 @@ def handle_webhook_event(data):
             contact_id=contact_id,
             services=services,
             credentials=credentials,
-            customer_address=customer_address
+            customer_address=customer_address,
+            companyName=companyName
         )
 
         print("Invoice response:", response)

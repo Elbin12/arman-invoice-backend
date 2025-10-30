@@ -138,7 +138,7 @@ def create_opportunity(contact_id, name, monetary_value, is_first_time):
 
     return response.json()
 
-def create_invoice(name, contact_id, services, credentials, customer_address):
+def create_invoice(name, contact_id, services, credentials, customer_address, companyName):
     """
     Create an invoice in GHL for the given contact.
 
@@ -212,7 +212,8 @@ def create_invoice(name, contact_id, services, credentials, customer_address):
         "id":contact_id,
         "name": contact.first_name,
         "email": contact.email,
-        "address":{"addressLine1":customer_address}
+        "address":{"addressLine1":customer_address},
+        "companyName": companyName
     }
 
     businessDetails = {
@@ -365,3 +366,17 @@ def update_contact(contact_id, data):
     except Exception as e:
         print(e, 'errorrr')
         return {'error':'Error while updating ghl contact'}
+
+def getBussiness(access_token, businessId):
+    url = 'https://services.leadconnectorhq.com/businesses/'
+    response = requests.get(
+        url,
+        headers={
+            'Accept': 'application/json',
+            'Authorization': f"Bearer {access_token}",
+            'Version': '2021-07-28'
+        },
+        params={"businessId": businessId}
+    )
+    print("Raw response business:", response.status_code, response.text, response.json())
+    return response.json().get("business", [])
