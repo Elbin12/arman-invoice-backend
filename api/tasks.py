@@ -293,7 +293,8 @@ def handle_webhook_event(data):
 
             # Save invoice to database if location_id matches
             saved_invoice = None
-            if location_id == "b8qvo7VooP3JD3dIZU42":
+            # if location_id == "b8qvo7VooP3JD3dIZU42":
+            if True:
                 try:
                     saved_invoice = save_invoice_to_db(response, contact_id, contactName, contacts[0].get("email"), phoneNo, customer_address, companyName, location_id)
                     print(f"Invoice saved to database with token: {saved_invoice.token}")
@@ -332,7 +333,8 @@ def handle_webhook_event(data):
             payload = {"tags": updated_tags}
             
             # Add invoice URL to custom field if location matches and invoice was saved
-            if location_id == "b8qvo7VooP3JD3dIZU42" and saved_invoice:
+            # if location_id == "b8qvo7VooP3JD3dIZU42" and saved_invoice:
+            if True and saved_invoice:
                 try:
                     # Get existing custom fields from contact
                     existing_custom_fields = contacts[0].get("customFields") or []
