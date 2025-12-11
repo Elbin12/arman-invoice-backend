@@ -15,10 +15,16 @@ from dotenv import load_dotenv
 import os
 from datetime import timedelta
 
-load_dotenv()
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from .env file
+# Try loading from project root first, then from backend directory
+env_path = BASE_DIR / '.env'
+if not env_path.exists():
+    env_path = BASE_DIR.parent / '.env'
+
+load_dotenv(dotenv_path=env_path)
 
 
 # Quick-start development settings - unsuitable for production
@@ -30,7 +36,7 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['13.58.139.11', '127.0.0.1', 'workorder.theservicepilot.com']
+ALLOWED_HOSTS = ['13.58.139.11', '127.0.0.1', 'workorder.theservicepilot.com','localhost']
 
 
 # Application definition
@@ -227,7 +233,16 @@ FRONTEND_URL = os.getenv("FRONTEND_URL")
 SCOPE = os.getenv("SCOPE")
 BASE_URI = os.getenv("BASE_URI")
 PIPELINE_ID = os.getenv("PIPELINE_ID")
-PIPELINE_STAGE_ID = os.getenv("PIPELINE_STAGE_ID")    
+PIPELINE_STAGE_ID = os.getenv("PIPELINE_STAGE_ID")
+
+# Stripe Configuration
+
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY_TEST")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY_TEST")
+
+print(STRIPE_SECRET_KEY, 'STRIPE_SECRET_KEY')
+print(STRIPE_PUBLISHABLE_KEY, 'STRIPE_PUBLISHABLE_KEY')
+# STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")  # Add this later for webhook verification
 
 CELERY_BEAT_SCHEDULE = {
     'make-api-call-every-minute': {

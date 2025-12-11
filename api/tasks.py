@@ -2,14 +2,12 @@ import requests, logging
 from celery import shared_task
 from ghl_auth.models import GHLAuthCredentials
 from django.conf import settings
-from decimal import Decimal
-from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
+from datetime import datetime, timedelta
 
 from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id, search_ghl_contact, create_invoice, update_contact, getBussiness
 from ghl_auth.models import GHLUser, CommissionRule
-from .models import Payout
-
-from decimal import Decimal, ROUND_HALF_UP
+from .models import Payout, Invoice, InvoiceItem
 
 
 GHL_CLIENT_ID = settings.GHL_CLIENT_ID
@@ -129,6 +127,108 @@ def make_api_call():
             )
 
 
+def save_invoice_to_db(ghl_response, contact_id, contact_name, contact_email, contact_phone, contact_address, company_name, location_id):
+    """
+    Save invoice data from GHL response to database
+    """
+    try:
+        # Parse dates
+        issue_date_str = ghl_response.get("issueDate", "")
+        due_date_str = ghl_response.get("dueDate", "")
+        
+        issue_date = None
+        due_date = None
+        
+        if issue_date_str:
+            try:
+                issue_date = datetime.fromisoformat(issue_date_str.replace('Z', '+00:00')).date()
+            except:
+                issue_date = datetime.now().date()
+        
+        if due_date_str:
+            try:
+                due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00')).date()
+            except:
+                # Default to 13 days from issue date
+                issue_date = issue_date or datetime.now().date()
+                due_date = (datetime.now() + timedelta(days=13)).date()
+        
+        if not issue_date:
+            issue_date = datetime.now().date()
+        if not due_date:
+            due_date = (datetime.now() + timedelta(days=13)).date()
+        
+        # Extract business details
+        business_details = ghl_response.get("businessDetails", {})
+        business_name = business_details.get("name", "TruShine Window Cleaning")
+        business_logo_url = business_details.get("logoUrl")
+        
+        # Extract contact details from response
+        contact_details = ghl_response.get("contactDetails", {})
+        contact_name = contact_details.get("name") or contact_name
+        contact_email = contact_details.get("email") or contact_email
+        contact_phone = contact_details.get("phoneNo") or contact_phone
+        contact_address_obj = contact_details.get("address", {})
+        contact_address = contact_address_obj.get("addressLine1") or contact_address
+        company_name = contact_details.get("companyName") or company_name
+        
+        # Create or update invoice
+        invoice, created = Invoice.objects.update_or_create(
+            ghl_invoice_id=ghl_response.get("_id"),
+            defaults={
+                "invoice_number": ghl_response.get("invoiceNumber"),
+                "name": ghl_response.get("name"),
+                "status": ghl_response.get("status", "draft"),
+                "currency": ghl_response.get("currency", "USD"),
+                "total": Decimal(str(ghl_response.get("total", 0))),
+                "invoice_total": Decimal(str(ghl_response.get("invoiceTotal", 0))) if ghl_response.get("invoiceTotal") else None,
+                "amount_paid": Decimal(str(ghl_response.get("amountPaid", 0))),
+                "amount_due": Decimal(str(ghl_response.get("amountDue", 0))),
+                "issue_date": issue_date,
+                "due_date": due_date,
+                "contact_id": contact_id,
+                "contact_name": contact_name,
+                "contact_email": contact_email,
+                "contact_phone": contact_phone,
+                "contact_address": contact_address,
+                "contact_company_name": company_name,
+                "business_name": business_name,
+                "business_logo_url": business_logo_url,
+                "location_id": location_id,
+                "company_id": ghl_response.get("companyId"),
+                "live_mode": ghl_response.get("liveMode", True),
+                "raw_data": ghl_response,
+            }
+        )
+
+
+
+        print("invoice", invoice.token)
+        
+        # Save invoice items
+        invoice_items = ghl_response.get("invoiceItems", [])
+        for item_data in invoice_items:
+            InvoiceItem.objects.update_or_create(
+                invoice=invoice,
+                ghl_item_id=item_data.get("_id"),
+                defaults={
+                    "name": item_data.get("name", ""),
+                    "description": item_data.get("description"),
+                    "currency": item_data.get("currency", "USD"),
+                    "quantity": Decimal(str(item_data.get("qty", 1))),
+                    "amount": Decimal(str(item_data.get("amount", 0))),
+                    "product_id": item_data.get("productId"),
+                    "tax_inclusive": item_data.get("taxInclusive", False),
+                    "taxes": item_data.get("taxes", []),
+                }
+            )
+        
+        return invoice
+    except Exception as e:
+        logger.error(f"Error saving invoice to database: {e}", exc_info=True)
+        raise
+
+
 @shared_task
 def handle_webhook_event(data):
     try:
@@ -136,12 +236,16 @@ def handle_webhook_event(data):
         customer_name = data.get("customer_name")
         services = data.get("selected_services", [])
         customer_address = data.get("customer_address")
+        location_id = data.get("location_id")
 
         if not customer_email:
             print("No customer email in webhook payload.")
             return {"error": "Customer email missing"}
-        
-        credentials = GHLAuthCredentials.objects.first()
+
+        if location_id:
+            credentials = GHLAuthCredentials.objects.get(location_id=location_id)
+        else:
+            credentials = GHLAuthCredentials.objects.first()
 
         # Search contact
         contacts = search_ghl_contact(credentials.access_token, customer_email, credentials.location_id)
@@ -187,6 +291,16 @@ def handle_webhook_event(data):
         if response and not response.get("error"):
             invoice_id = response.get("_id")
 
+            # Save invoice to database if location_id matches
+            saved_invoice = None
+            if location_id == "b8qvo7VooP3JD3dIZU42":
+                try:
+                    saved_invoice = save_invoice_to_db(response, contact_id, contactName, contacts[0].get("email"), phoneNo, customer_address, companyName, location_id)
+                    print(f"Invoice saved to database with token: {saved_invoice.token}")
+                except Exception as e:
+                    print(f"Error saving invoice to database: {e}")
+                    logger.error(f"Error saving invoice to database: {e}", exc_info=True)
+
             existing_tags = tags if isinstance(tags, list) else []
             print("Existing tags:", existing_tags)
 
@@ -195,6 +309,17 @@ def handle_webhook_event(data):
                     print("Card not authorized → sending invoice...")
                     send_resp = send_invoice(invoice_id)
                     print("Send invoice response:", send_resp)
+                    
+                    # Update invoice status if saved
+                    if saved_invoice and send_resp and not send_resp.get("error"):
+                        saved_invoice.status = "sent"
+                        if send_resp.get("invoice", {}).get("sentAt"):
+                            try:
+                                sent_at_str = send_resp.get("invoice", {}).get("sentAt")
+                                saved_invoice.sent_at = datetime.fromisoformat(sent_at_str.replace('Z', '+00:00'))
+                            except:
+                                pass
+                        saved_invoice.save()
                 else:
                     print("Card authorized → skipping invoice send.")
                     send_resp = "skipped"
@@ -205,14 +330,64 @@ def handle_webhook_event(data):
             # Avoid duplicates
             updated_tags = list(set(existing_tags + ["Invoice Created"]))
             payload = {"tags": updated_tags}
+            
+            # Add invoice URL to custom field if location matches and invoice was saved
+            if location_id == "b8qvo7VooP3JD3dIZU42" and saved_invoice:
+                try:
+                    # Get existing custom fields from contact
+                    existing_custom_fields = contacts[0].get("customFields") or []
+                    if not isinstance(existing_custom_fields, list):
+                        existing_custom_fields = []
+                    
+                    # Get FRONTEND_URL from settings
+                    frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
+                    # Remove trailing slash if present
+                    frontend_url = frontend_url.rstrip('/')
+                    
+                    # Construct invoice URL
+                    invoice_url = f"{frontend_url}/invoice/{saved_invoice.token}/"
+                    
+                    # Check if custom field already exists
+                    custom_field_id = "G4IXyj5y49rKinuXbnCA"
+                    custom_fields_updated = False
+                    
+                    # Update existing custom field if it exists
+                    for field in existing_custom_fields:
+                        if field.get("id") == custom_field_id:
+                            field["field_value"] = invoice_url
+                            custom_fields_updated = True
+                            break
+                    
+                    # Add new custom field if it doesn't exist
+                    if not custom_fields_updated:
+                        existing_custom_fields.append({
+                            "id": custom_field_id,
+                            "field_value": invoice_url
+                        })
+                    
+                    # Add customFields to payload
+                    payload["customFields"] = existing_custom_fields
+                    print(f"Adding invoice URL to custom field: {invoice_url}")
+                    print(f"Custom fields payload: {payload.get('customFields')}")
+                except Exception as e:
+                    print(f"Error adding invoice URL to custom field: {e}")
+                    logger.error(f"Error adding invoice URL to custom field: {e}", exc_info=True)
+            
             update_resp = update_contact(contact_id, payload)
             print("Contact update response:", update_resp)
 
-            return {
+            result = {
                 "invoice": response,
                 "contact_update": update_resp,
                 "invoice_send": send_resp
             }
+            
+            # Add invoice token to response if saved
+            if saved_invoice:
+                result["invoice_token"] = str(saved_invoice.token)
+                result["invoice_url"] = f"/invoice/{saved_invoice.token}/"
+            
+            return result
 
         return response
 

@@ -7,12 +7,15 @@ from rest_framework.generics import ListAPIView
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.db.models import Q
+from django.conf import settings
+from django.utils import timezone
+import stripe
+import os
 
-
-from .models import Service, Contact, Job, WebhookLog
+from .models import Service, Contact, Job, WebhookLog, Invoice, InvoiceItem
 from ghl_auth.models import GHLAuthCredentials, GHLUser, CommissionRule
 from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, GHLUserPercentageEditSerializer, CommissionRuleEditSerializer
-from .utils import create_opportunity, create_invoice, add_followers
+from .utils import create_opportunity, create_invoice, add_followers, record_payment_in_ghl
 from .tasks import handle_webhook_event, handle_user_create_webhook_event, payroll_webhook_event
 
 import json
@@ -333,3 +336,440 @@ class CreateJobValidations(APIView):
             "success": success,
             "messages": messages
         })
+
+
+class PublicInvoiceView(APIView):
+    """
+    Public view for invoice details - no authentication required
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    
+    def get(self, request, token):
+        """
+        Retrieve invoice details by token
+        """
+        try:
+            invoice = Invoice.objects.prefetch_related('items').get(token=token)
+        except Invoice.DoesNotExist:
+            return Response(
+                {"error": "Invoice not found"},
+                status=404
+            )
+        
+        # Serialize invoice data
+        invoice_data = {
+            "token": str(invoice.token),
+            "invoice_number": invoice.invoice_number,
+            "name": invoice.name,
+            "status": invoice.status,
+            "currency": invoice.currency,
+            "total": str(invoice.total),
+            "invoice_total": str(invoice.invoice_total) if invoice.invoice_total else None,
+            "amount_paid": str(invoice.amount_paid),
+            "amount_due": str(invoice.amount_due),
+            "is_paid": invoice.is_paid,
+            "issue_date": invoice.issue_date.isoformat() if invoice.issue_date else None,
+            "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
+            "contact": {
+                "name": invoice.contact_name,
+                "email": invoice.contact_email,
+                "phone": invoice.contact_phone,
+                "address": invoice.contact_address,
+                "company_name": invoice.contact_company_name,
+            },
+            "business": {
+                "name": invoice.business_name,
+                "logo_url": invoice.business_logo_url,
+            },
+            "items": [
+                {
+                    "name": item.name,
+                    "description": item.description,
+                    "quantity": str(item.quantity),
+                    "amount": str(item.amount),
+                    "currency": item.currency,
+                    "taxes": item.taxes,
+                    "tax_inclusive": item.tax_inclusive,
+                }
+                for item in invoice.items.all()
+            ],
+            "created_at": invoice.created_at.isoformat() if invoice.created_at else None,
+            "sent_at": invoice.sent_at.isoformat() if invoice.sent_at else None,
+            "signature": invoice.signature,
+            "signed_at": invoice.signed_at.isoformat() if invoice.signed_at else None,
+        }
+        
+        return Response(invoice_data)
+
+
+class SaveInvoiceSignature(APIView):
+    """
+    Save digital signature for an invoice
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    
+    def post(self, request, token):
+        """
+        Save signature for invoice
+        """
+        try:
+            invoice = Invoice.objects.get(token=token)
+        except Invoice.DoesNotExist:
+            return Response(
+                {"error": "Invoice not found"},
+                status=404
+            )
+        
+        signature = request.data.get('signature')
+        if not signature:
+            return Response(
+                {"error": "Signature is required"},
+                status=400
+            )
+        
+        # Save signature and timestamp
+        invoice.signature = signature
+        invoice.signed_at = timezone.now()
+        invoice.save()
+        
+        return Response({
+            "message": "Signature saved successfully",
+            "signed_at": invoice.signed_at.isoformat()
+        })
+
+
+class VerifyPaymentStatus(APIView):
+    """
+    Verify and update payment status from Stripe checkout session
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    
+    def post(self, request, token):
+        """
+        Verify payment status with Stripe and update invoice if paid
+        """
+        try:
+            invoice = Invoice.objects.get(token=token)
+        except Invoice.DoesNotExist:
+            return Response(
+                {"error": "Invoice not found"},
+                status=404
+            )
+        
+        # Check if invoice is already marked as paid
+        if invoice.is_paid:
+            return Response({
+                "status": "paid",
+                "message": "Invoice is already marked as paid",
+                "invoice": {
+                    "status": invoice.status,
+                    "amount_paid": str(invoice.amount_paid),
+                    "amount_due": str(invoice.amount_due),
+                    "is_paid": invoice.is_paid
+                }
+            })
+        
+        # Check if we have a checkout session ID
+        if not invoice.stripe_checkout_session_id:
+            return Response({
+                "status": "pending",
+                "message": "No payment session found for this invoice"
+            })
+        
+        # Initialize Stripe
+        stripe_secret_key = settings.STRIPE_SECRET_KEY
+        if not stripe_secret_key:
+            return Response(
+                {"error": "Stripe is not configured"},
+                status=500
+            )
+        
+        stripe.api_key = stripe_secret_key
+        
+        try:
+            # Retrieve the checkout session from Stripe
+            session = stripe.checkout.Session.retrieve(invoice.stripe_checkout_session_id)
+            
+            # Check payment status
+            if session.payment_status == 'paid':
+                # Payment was successful - update invoice
+                payment_intent_id = session.payment_intent
+                if payment_intent_id:
+                    invoice.stripe_payment_intent_id = payment_intent_id
+                
+                # Get amount paid from session
+                amount_total = session.amount_total or 0  # Amount in cents
+                amount_paid = float(amount_total) / 100  # Convert to dollars
+                
+                # Check if invoice was already paid to avoid duplicate GHL calls
+                was_already_paid = invoice.is_paid
+                
+                # Update invoice status
+                invoice.status = 'paid'
+                invoice.amount_paid = amount_paid
+                invoice.amount_due = max(0, float(invoice.total) - amount_paid)
+                invoice.save()
+                
+                # Record payment in GHL (only if it wasn't already paid)
+                ghl_result = {"success": False, "error": "Already processed"}
+                if not was_already_paid:
+                    ghl_result = record_payment_in_ghl(invoice, amount_paid)
+                    if not ghl_result.get("success"):
+                        print(f"Warning: Failed to record payment in GHL: {ghl_result.get('error')}")
+                        # Don't fail the request if GHL recording fails, just log it
+                
+                return Response({
+                    "status": "paid",
+                    "message": "Payment verified and invoice updated",
+                    "invoice": {
+                        "status": invoice.status,
+                        "amount_paid": str(invoice.amount_paid),
+                        "amount_due": str(invoice.amount_due),
+                        "is_paid": invoice.is_paid
+                    },
+                    "ghl_payment_recorded": ghl_result.get("success", False)
+                })
+            else:
+                # Payment not yet completed
+                return Response({
+                    "status": session.payment_status,
+                    "message": f"Payment status: {session.payment_status}",
+                    "invoice": {
+                        "status": invoice.status,
+                        "amount_paid": str(invoice.amount_paid),
+                        "amount_due": str(invoice.amount_due),
+                        "is_paid": invoice.is_paid
+                    }
+                })
+                
+        except stripe.error.StripeError as e:
+            print(f"Stripe error verifying payment: {e}")
+            return Response(
+                {"error": f"Failed to verify payment: {str(e)}"},
+                status=500
+            )
+        except Exception as e:
+            print(f"Error verifying payment: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {"error": f"Failed to verify payment: {str(e)}"},
+                status=500
+            )
+
+
+class CreateStripeCheckoutSession(APIView):
+    """
+    Create a Stripe Checkout Session for invoice payment
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    
+    def post(self, request, token):
+        try:
+            # Check if Stripe API key is configured
+            stripe_secret_key = settings.STRIPE_SECRET_KEY
+            if not stripe_secret_key:
+                # Debug: Print environment variable status
+                print(f"DEBUG: STRIPE_SECRET_KEY from env: {os.getenv('STRIPE_SECRET_KEY')}")
+                print(f"DEBUG: STRIPE_SECRET_KEY from settings: {settings.STRIPE_SECRET_KEY}")
+                return Response(
+                    {"error": "Stripe API key is not configured. Please check your .env file and restart the server."},
+                    status=500
+                )
+            
+            # Get invoice
+            invoice = Invoice.objects.get(token=token)
+            
+            # Check if already paid
+            if invoice.is_paid:
+                return Response(
+                    {"error": "Invoice is already paid"},
+                    status=400
+                )
+            
+            # Check if signature is required
+            if not invoice.signature:
+                return Response(
+                    {"error": "Please sign the invoice before proceeding with payment"},
+                    status=400
+                )
+            
+            # Check if amount due is valid
+            if invoice.amount_due <= 0:
+                return Response(
+                    {"error": "No amount due for this invoice"},
+                    status=400
+                )
+            
+            # Initialize Stripe with API key
+            stripe_secret_key = settings.STRIPE_SECRET_KEY
+            if not stripe_secret_key:
+                print("ERROR: STRIPE_SECRET_KEY is not set in environment variables")
+                return Response(
+                    {"error": "Payment service is not configured. Please contact support."},
+                    status=500
+                )
+            
+            stripe.api_key = stripe_secret_key
+            
+            # Get frontend URL for success/cancel redirects
+            frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
+            frontend_url = frontend_url.rstrip('/')
+            
+            # Create Checkout Session
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=['card'],
+                line_items=[{
+                    'price_data': {
+                        'currency': invoice.currency.lower(),
+                        'product_data': {
+                            'name': f"Invoice #{invoice.invoice_number or 'N/A'}",
+                            'description': invoice.name,
+                        },
+                        'unit_amount': int(float(invoice.amount_due) * 100),  # Convert to cents
+                    },
+                    'quantity': 1,
+                }],
+                mode='payment',
+                success_url=f'{frontend_url}/invoice/{token}/?payment=success',
+                cancel_url=f'{frontend_url}/invoice/{token}/?payment=cancelled',
+                customer_email=invoice.contact_email,
+                metadata={
+                    'invoice_token': str(invoice.token),
+                    'invoice_id': str(invoice.id),
+                    'invoice_number': invoice.invoice_number or '',
+                },
+            )
+            
+            # Save checkout session ID to invoice
+            invoice.stripe_checkout_session_id = checkout_session.id
+            invoice.save()
+            
+            return Response({
+                'checkout_url': checkout_session.url,
+                'session_id': checkout_session.id
+            })
+            
+        except Invoice.DoesNotExist:
+            return Response(
+                {"error": "Invoice not found"},
+                status=404
+            )
+        except stripe.error.StripeError as e:
+            print(f"Stripe API error: {e}")
+            return Response(
+                {"error": f"Payment processing error: {str(e)}"},
+                status=500
+            )
+        except Exception as e:
+            print(f"Error creating Stripe checkout session: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {"error": f"Failed to create payment session: {str(e)}"},
+                status=500
+            )
+
+
+@csrf_exempt
+def stripe_webhook_handler(request):
+    """
+    Handle Stripe webhook events (without verification for now)
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    
+    try:
+        payload = request.body
+        # Skip webhook verification for now - add later
+        # sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
+        # event = stripe.Webhook.construct_event(payload, sig_header, settings.STRIPE_WEBHOOK_SECRET)
+        
+        data = json.loads(payload)
+        event_type = data.get('type')
+        
+        print(f"Received Stripe webhook: {event_type}")
+        
+        if event_type == 'checkout.session.completed':
+            # Payment was successful
+            session = data.get('data', {}).get('object', {})
+            session_id = session.get('id')
+            payment_status = session.get('payment_status')
+            
+            if payment_status == 'paid':
+                # Find invoice by checkout session ID
+                try:
+                    invoice = Invoice.objects.get(stripe_checkout_session_id=session_id)
+                    
+                    # Get payment intent details
+                    payment_intent_id = session.get('payment_intent')
+                    if payment_intent_id:
+                        invoice.stripe_payment_intent_id = payment_intent_id
+                    
+                    # Get amount paid from session
+                    amount_total = session.get('amount_total', 0)  # Amount in cents
+                    amount_paid = float(amount_total) / 100  # Convert to dollars
+                    
+                    # Check if invoice was already paid to avoid duplicate GHL calls
+                    was_already_paid = invoice.is_paid
+                    
+                    # Update invoice status
+                    invoice.status = 'paid'
+                    invoice.amount_paid = amount_paid
+                    invoice.amount_due = max(0, float(invoice.total) - amount_paid)
+                    invoice.save()
+                    
+                    print(f"Invoice {invoice.invoice_number} marked as paid. Amount: ${amount_paid}")
+                    
+                    # Record payment in GHL (only if it wasn't already paid)
+                    if not was_already_paid:
+                        ghl_result = record_payment_in_ghl(invoice, amount_paid)
+                        if ghl_result.get("success"):
+                            print(f"Payment recorded in GHL for invoice {invoice.invoice_number}")
+                        else:
+                            print(f"Warning: Failed to record payment in GHL for invoice {invoice.invoice_number}: {ghl_result.get('error')}")
+                    else:
+                        print(f"Invoice {invoice.invoice_number} was already marked as paid, skipping GHL payment recording")
+                    
+                except Invoice.DoesNotExist:
+                    print(f"Invoice not found for session: {session_id}")
+                except Exception as e:
+                    print(f"Error updating invoice: {e}")
+                    import traceback
+                    traceback.print_exc()
+        
+        elif event_type == 'payment_intent.payment_failed':
+            # Payment failed
+            payment_intent = data.get('data', {}).get('object', {})
+            payment_intent_id = payment_intent.get('id')
+            
+            try:
+                invoice = Invoice.objects.get(stripe_payment_intent_id=payment_intent_id)
+                # You might want to add a 'failed' status or keep it as 'sent'
+                # For now, we'll just log it
+                print(f"Payment failed for invoice {invoice.invoice_number}")
+            except Invoice.DoesNotExist:
+                print(f"Invoice not found for payment intent: {payment_intent_id}")
+        
+        elif event_type == 'checkout.session.async_payment_failed':
+            # Async payment failed
+            session = data.get('data', {}).get('object', {})
+            session_id = session.get('id')
+            
+            try:
+                invoice = Invoice.objects.get(stripe_checkout_session_id=session_id)
+                print(f"Async payment failed for invoice {invoice.invoice_number}")
+            except Invoice.DoesNotExist:
+                print(f"Invoice not found for session: {session_id}")
+        
+        return JsonResponse({"status": "success"})
+        
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        print(f"Error processing webhook: {e}")
+        return JsonResponse({"error": str(e)}, status=500)

@@ -16,4 +16,9 @@ urlpatterns = [
     path("payroll/<str:user_id>/", views.PayrollView.as_view(), name="percentage-update"),
     path("payroll/commission/<str:user_id>/", views.CommissionRuleUpdateView.as_view()),
     path('commissions/<str:user_id>/<int:commission_id>/', views.CommissionRuleUpdateView.as_view()),
+    path('invoice/<uuid:token>/', views.PublicInvoiceView.as_view(), name='public-invoice-view'),
+    path('invoice/<uuid:token>/signature/', views.SaveInvoiceSignature.as_view(), name='save-invoice-signature'),
+    path('invoice/<uuid:token>/verify-payment/', views.VerifyPaymentStatus.as_view(), name='verify-payment-status'),
+    path('invoice/<uuid:token>/create-checkout-session/', views.CreateStripeCheckoutSession.as_view(), name='create-stripe-checkout'),
+    path('stripe/webhook/', views.stripe_webhook_handler, name='stripe-webhook'),
 ]

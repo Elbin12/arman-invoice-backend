@@ -381,3 +381,98 @@ def getBussiness(access_token, businessId):
     )
     print("Raw response business:", response.status_code, response.text, response.json())
     return response.json().get("business", [])
+
+
+def record_payment_in_ghl(invoice, amount_paid):
+    """
+    Record payment in GHL (GoHighLevel) for the invoice
+    
+    Args:
+        invoice: Invoice model instance
+        amount_paid: Decimal amount that was paid
+    
+    Returns:
+        dict with success status and response data or error message
+    """
+    # Check if invoice has GHL invoice ID
+    if not invoice.ghl_invoice_id:
+        print(f"Invoice {invoice.invoice_number} does not have GHL invoice ID, skipping GHL payment recording")
+        return {"success": False, "error": "No GHL invoice ID found"}
+    
+    # Get GHL credentials - try to get by location_id first, otherwise get first
+    try:
+        credentials = None
+        if invoice.location_id:
+            credentials = GHLAuthCredentials.objects.filter(location_id=invoice.location_id).first()
+        if not credentials:
+            credentials = GHLAuthCredentials.objects.first()
+        
+        if not credentials:
+            print("No GHL credentials found")
+            return {"success": False, "error": "No GHL credentials found"}
+    except Exception as e:
+        print(f"Error getting GHL credentials: {e}")
+        return {"success": False, "error": f"Error getting credentials: {str(e)}"}
+    
+    # Prepare the API request
+    url = f'https://services.leadconnectorhq.com/invoices/{invoice.ghl_invoice_id}/record-payment'
+    
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Version': '2021-07-28',
+        'Authorization': f'Bearer {credentials.access_token}'
+    }
+    
+    # Prepare payment data
+    from datetime import datetime
+    payment_data = {
+        "altId": invoice.location_id,
+        "altType": "location",
+        "mode": "card",
+        "card": {
+            "brand": "stripe",
+            "last4": "****"
+        },
+        "notes": f"Payment received via Stripe for invoice {invoice.invoice_number}",
+        "amount": float(amount_paid),
+        "meta": {
+            "stripe_payment_intent_id": invoice.stripe_payment_intent_id or "",
+            "stripe_checkout_session_id": invoice.stripe_checkout_session_id or ""
+        },
+        "fulfilledAt": datetime.now().isoformat() + "Z"
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payment_data, timeout=30)
+        
+        if response.status_code in [200, 201]:
+            print(f"Successfully recorded payment in GHL for invoice {invoice.invoice_number}")
+            return {
+                "success": True,
+                "data": response.json() if response.text else {}
+            }
+        else:
+            error_msg = f"GHL API returned status {response.status_code}: {response.text}"
+            print(f"Error recording payment in GHL: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "status_code": response.status_code
+            }
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Request error recording payment in GHL: {str(e)}"
+        print(error_msg)
+        return {
+            "success": False,
+            "error": error_msg
+        }
+    except Exception as e:
+        error_msg = f"Unexpected error recording payment in GHL: {str(e)}"
+        print(error_msg)
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": error_msg
+        }
