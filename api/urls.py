@@ -5,6 +5,7 @@ urlpatterns = [
     path("webhook/", views.webhook_handler),
     path("webhook/user-create/", views.user_create_webhook_handler),
     path("webhook/payroll/", views.payroll_webhook_handler),
+    path("webhook/invoice-paid/", views.invoice_paid_webhook_handler, name='invoice-paid-webhook'),
     path('login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/refresh/', TokenRefreshView.as_view()),
     path('services/', views.ServicesView.as_view()),

@@ -15,7 +15,7 @@ import os
 from .models import Service, Contact, Job, WebhookLog, Invoice, InvoiceItem
 from ghl_auth.models import GHLAuthCredentials, GHLUser, CommissionRule
 from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, GHLUserPercentageEditSerializer, CommissionRuleEditSerializer
-from .utils import create_opportunity, create_invoice, add_followers, record_payment_in_ghl
+from .utils import create_opportunity, create_invoice, add_followers, record_payment_in_ghl, add_invoice_paid_tag_to_contact
 from .tasks import handle_webhook_event, handle_user_create_webhook_event, payroll_webhook_event
 
 import json
@@ -515,11 +515,19 @@ class VerifyPaymentStatus(APIView):
                 
                 # Record payment in GHL (only if it wasn't already paid)
                 ghl_result = {"success": False, "error": "Already processed"}
+                tag_result = {"success": False, "error": "Already processed"}
                 if not was_already_paid:
                     ghl_result = record_payment_in_ghl(invoice, amount_paid)
                     if not ghl_result.get("success"):
                         print(f"Warning: Failed to record payment in GHL: {ghl_result.get('error')}")
                         # Don't fail the request if GHL recording fails, just log it
+                    
+                    # Add "invoice_paid" tag to GHL contact
+                    tag_result = add_invoice_paid_tag_to_contact(invoice.contact_id, invoice.location_id)
+                    if tag_result.get("success"):
+                        print(f"Successfully added invoice_paid tag to contact {invoice.contact_id}")
+                    else:
+                        print(f"Warning: Failed to add invoice_paid tag to contact {invoice.contact_id}: {tag_result.get('error')}")
                 
                 return Response({
                     "status": "paid",
@@ -530,7 +538,8 @@ class VerifyPaymentStatus(APIView):
                         "amount_due": str(invoice.amount_due),
                         "is_paid": invoice.is_paid
                     },
-                    "ghl_payment_recorded": ghl_result.get("success", False)
+                    "ghl_payment_recorded": ghl_result.get("success", False),
+                    "tag_added": tag_result.get("success", False)
                 })
             else:
                 # Payment not yet completed
@@ -732,6 +741,13 @@ def stripe_webhook_handler(request):
                             print(f"Payment recorded in GHL for invoice {invoice.invoice_number}")
                         else:
                             print(f"Warning: Failed to record payment in GHL for invoice {invoice.invoice_number}: {ghl_result.get('error')}")
+                        
+                        # Add "invoice_paid" tag to GHL contact
+                        tag_result = add_invoice_paid_tag_to_contact(invoice.contact_id, invoice.location_id)
+                        if tag_result.get("success"):
+                            print(f"Successfully added invoice_paid tag to contact {invoice.contact_id}")
+                        else:
+                            print(f"Warning: Failed to add invoice_paid tag to contact {invoice.contact_id}: {tag_result.get('error')}")
                     else:
                         print(f"Invoice {invoice.invoice_number} was already marked as paid, skipping GHL payment recording")
                     
@@ -772,4 +788,75 @@ def stripe_webhook_handler(request):
         return JsonResponse({"error": "Invalid JSON"}, status=400)
     except Exception as e:
         print(f"Error processing webhook: {e}")
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@csrf_exempt
+def invoice_paid_webhook_handler(request):
+    """
+    Webhook handler to mark invoice as paid when payment is received
+    Receives ghl_invoice_id and marks the corresponding invoice as paid
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        ghl_invoice_id = data.get('ghl_invoice_id')
+        
+        if not ghl_invoice_id:
+            return JsonResponse({
+                "error": "ghl_invoice_id is required"
+            }, status=400)
+        
+        # Fetch invoice by ghl_invoice_id
+        try:
+            invoice = Invoice.objects.get(ghl_invoice_id=ghl_invoice_id)
+        except Invoice.DoesNotExist:
+            return JsonResponse({
+                "error": f"Invoice with ghl_invoice_id '{ghl_invoice_id}' not found"
+            }, status=404)
+        
+        # Check if invoice is already paid
+        if invoice.status == 'paid':
+            return JsonResponse({
+                "message": "Invoice is already marked as paid",
+                "invoice_id": invoice.ghl_invoice_id,
+                "invoice_number": invoice.invoice_number,
+                "status": invoice.status
+            }, status=200)
+        
+        # Mark invoice as paid
+        invoice.status = 'paid'
+        # Set amount_paid to total if not already set
+        if invoice.amount_paid == 0:
+            invoice.amount_paid = invoice.total
+        invoice.amount_due = max(0, float(invoice.total) - float(invoice.amount_paid))
+        invoice.save()
+        
+        print(f"Invoice {invoice.invoice_number} (ghl_invoice_id: {ghl_invoice_id}) marked as paid via webhook")
+        
+        # Add "invoice_paid" tag to GHL contact
+        tag_result = add_invoice_paid_tag_to_contact(invoice.contact_id, invoice.location_id)
+        if tag_result.get("success"):
+            print(f"Successfully added invoice_paid tag to contact {invoice.contact_id}")
+        else:
+            print(f"Warning: Failed to add invoice_paid tag to contact {invoice.contact_id}: {tag_result.get('error')}")
+        
+        return JsonResponse({
+            "message": "Invoice marked as paid successfully",
+            "invoice_id": invoice.ghl_invoice_id,
+            "invoice_number": invoice.invoice_number,
+            "status": invoice.status,
+            "amount_paid": str(invoice.amount_paid),
+            "amount_due": str(invoice.amount_due),
+            "tag_added": tag_result.get("success", False)
+        }, status=200)
+        
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    except Exception as e:
+        print(f"Error processing invoice paid webhook: {e}")
+        import traceback
+        traceback.print_exc()
         return JsonResponse({"error": str(e)}, status=500)

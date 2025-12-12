@@ -383,6 +383,82 @@ def getBussiness(access_token, businessId):
     return response.json().get("business", [])
 
 
+def add_invoice_paid_tag_to_contact(contact_id, location_id=None):
+    """
+    Add "invoice_paid" tag to a GHL contact
+    
+    Args:
+        contact_id: GHL contact ID
+        location_id: Optional location ID for credentials lookup
+    
+    Returns:
+        dict with success status and response data or error message
+    """
+    try:
+        # Get GHL credentials - try to get by location_id first, otherwise get first
+        credentials = None
+        if location_id:
+            credentials = GHLAuthCredentials.objects.filter(location_id=location_id).first()
+        if not credentials:
+            credentials = GHLAuthCredentials.objects.first()
+        
+        if not credentials:
+            print("No GHL credentials found for adding invoice_paid tag")
+            return {"success": False, "error": "No GHL credentials found"}
+        
+        # Fetch contact to get existing tags
+        url = f'https://services.leadconnectorhq.com/contacts/{contact_id}'
+        headers = {
+            'Accept': 'application/json',
+            'Authorization': f'Bearer {credentials.access_token}',
+            'Version': '2021-07-28'
+        }
+        
+        try:
+            get_response = requests.get(url, headers=headers)
+            if get_response.status_code != 200:
+                print(f"Failed to fetch contact {contact_id}: {get_response.status_code}")
+                return {"success": False, "error": f"Failed to fetch contact: {get_response.status_code}"}
+            
+            contact_data = get_response.json().get("contact", {})
+            existing_tags = contact_data.get("tags", [])
+            
+            # Ensure tags is a list
+            if not isinstance(existing_tags, list):
+                existing_tags = []
+            
+            # Check if "invoice_paid" tag already exists
+            if "invoice_paid" in existing_tags:
+                print(f"Contact {contact_id} already has invoice_paid tag")
+                return {"success": True, "message": "Tag already exists"}
+            
+            # Add "invoice_paid" tag
+            updated_tags = list(set(existing_tags + ["invoice_paid"]))
+            payload = {"tags": updated_tags}
+            
+            # Update contact with new tags
+            update_result = update_contact(contact_id, payload)
+            
+            if update_result.get("error"):
+                print(f"Error updating contact tags: {update_result.get('error')}")
+                return {"success": False, "error": update_result.get("error")}
+            
+            print(f"Successfully added invoice_paid tag to contact {contact_id}")
+            return {"success": True, "data": update_result}
+            
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Request error adding tag to contact: {str(e)}"
+            print(error_msg)
+            return {"success": False, "error": error_msg}
+            
+    except Exception as e:
+        error_msg = f"Unexpected error adding invoice_paid tag: {str(e)}"
+        print(error_msg)
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": error_msg}
+
+
 def record_payment_in_ghl(invoice, amount_paid):
     """
     Record payment in GHL (GoHighLevel) for the invoice
