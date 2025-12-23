@@ -293,10 +293,11 @@ def handle_webhook_event(data):
 
             # Save invoice to database if location_id matches
             saved_invoice = None
-            location_id = "b8qvo7VooP3JD3dIZU42"
-            if location_id == "b8qvo7VooP3JD3dIZU42":
+            # Use location_id from data (not hardcoded)
+            webhook_location_id = data.get("location_id") or credentials.location_id
+            if webhook_location_id == "b8qvo7VooP3JD3dIZU42":
                 try:
-                    saved_invoice = save_invoice_to_db(response, contact_id, contactName, contacts[0].get("email"), phoneNo, customer_address, companyName, location_id)
+                    saved_invoice = save_invoice_to_db(response, contact_id, contactName, contacts[0].get("email"), phoneNo, customer_address, companyName, webhook_location_id)
                     print(f"Invoice saved to database with token: {saved_invoice.token}")
                 except Exception as e:
                     print(f"Error saving invoice to database: {e}")
@@ -333,7 +334,7 @@ def handle_webhook_event(data):
             payload = {"tags": updated_tags}
             
             # Add invoice URL to custom field if location matches and invoice was saved
-            if location_id == "b8qvo7VooP3JD3dIZU42" and saved_invoice:
+            if webhook_location_id == "b8qvo7VooP3JD3dIZU42" and saved_invoice:
                 try:
                     # Get existing custom fields from contact
                     existing_custom_fields = contacts[0].get("customFields") or []
@@ -383,10 +384,13 @@ def handle_webhook_event(data):
                 "invoice_send": send_resp
             }
             
-            # Add invoice token to response if saved
+            # Add invoice token and full URL to response if saved
             if saved_invoice:
                 result["invoice_token"] = str(saved_invoice.token)
-                result["invoice_url"] = f"/invoice/{saved_invoice.token}/"
+                # Get full frontend URL for the response
+                frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
+                frontend_url = frontend_url.rstrip('/')
+                result["invoice_url"] = f"{frontend_url}/invoice/{saved_invoice.token}/"
             
             return result
 
@@ -394,6 +398,9 @@ def handle_webhook_event(data):
 
     except Exception as e:
         print(f"Error handling webhook event: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
 
 @shared_task
 def payroll_webhook_event(data):

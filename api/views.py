@@ -31,9 +31,24 @@ def webhook_handler(request):
         data = json.loads(request.body)
         print("date:----- ", data)
         WebhookLog.objects.create(data=data)
-        handle_webhook_event.delay(data)
-        return JsonResponse({"message":"Webhook received"}, status=200)
+        # Call function directly (non-celery)
+        result = handle_webhook_event(data)
+        
+        # Prepare response
+        response_data = {"message": "Webhook received"}
+        
+        # If location_id matches and invoice was saved, include invoice URL in response
+        location_id = data.get("location_id")
+        if location_id == "b8qvo7VooP3JD3dIZU42" and result and result.get("invoice_url"):
+            # The function already returns the full invoice URL
+            response_data["invoice_url"] = result.get("invoice_url")
+            response_data["invoice_token"] = result.get("invoice_token")
+        
+        return JsonResponse(response_data, status=200)
     except Exception as e:
+        print(f"Error processing webhook: {e}")
+        import traceback
+        traceback.print_exc()
         return JsonResponse({"error": str(e)}, status=500)
 
 
