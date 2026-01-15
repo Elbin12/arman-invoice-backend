@@ -397,6 +397,7 @@ class PublicInvoiceView(APIView):
                 "name": invoice.business_name,
                 "logo_url": invoice.business_logo_url,
             },
+            "location_id": invoice.location_id,
             "items": [
                 {
                     "name": item.name,
