@@ -138,7 +138,7 @@ def create_opportunity(contact_id, name, monetary_value, is_first_time):
 
     return response.json()
 
-def create_invoice(name, contact_id, services, credentials, customer_address, companyName, phoneNo, contactName):
+def create_invoice(name, contact_id, services, credentials, customer_address=None, companyName=None, phoneNo=None, contactName=None, contact_email=None):
     """
     Create an invoice in GHL for the given contact.
 
@@ -147,6 +147,11 @@ def create_invoice(name, contact_id, services, credentials, customer_address, co
         location_id (str): GHL location ID
         services (list): List of services (product objects)
         credentials: GHLAuthCredentials instance
+        customer_address (str, optional): Customer address
+        companyName (str, optional): Company name
+        phoneNo (str, optional): Phone number
+        contactName (str, optional): Contact name
+        contact_email (str, optional): Contact email (preferred from GHL contact or webhook payload)
 
     Returns:
         dict: Response from GHL API
@@ -208,13 +213,20 @@ def create_invoice(name, contact_id, services, credentials, customer_address, co
         "type":'fixed' #percentage, fixed
     }
 
+    # Determine email to use: contact_email parameter > contact.email from DB > empty string
+    email_to_use = contact_email or (contact.email if contact.email else "")
+    
+    # Validate email is not empty and is a valid email format
+    if not email_to_use or not isinstance(email_to_use, str) or "@" not in email_to_use:
+        return {"error": "Valid contact email is required. Email must be provided from GHL contact or webhook payload."}
+
     contactDetails = {
         "id":contact_id,
-        "name": contactName,
-        "email": contact.email,
-        "address":{"addressLine1":customer_address},
-        "companyName": companyName,
-        "phoneNo": phoneNo
+        "name": contactName or contact.first_name or "",
+        "email": email_to_use,
+        "address":{"addressLine1":customer_address or ""},
+        "companyName": companyName or "",
+        "phoneNo": phoneNo or ""
     }
 
     businessDetails = {
@@ -223,7 +235,7 @@ def create_invoice(name, contact_id, services, credentials, customer_address, co
     }
 
     sentTo = {
-        "email":[contact.email]
+        "email":[email_to_use]
     }
 
     issue_date = datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%d")

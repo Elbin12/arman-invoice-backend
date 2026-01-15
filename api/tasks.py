@@ -275,6 +275,10 @@ def handle_webhook_event(data):
         invoice_name = f"Invoice for {customer_name or customer_email} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
         # Create invoice
+        # Get email from GHL contact response, fallback to customer_email from webhook payload
+        ghl_contact_email = contacts[0].get("email")
+        email_to_use = ghl_contact_email or customer_email
+        
         response = create_invoice(
             name=invoice_name,
             contact_id=contact_id,
@@ -284,6 +288,7 @@ def handle_webhook_event(data):
             companyName=companyName,
             phoneNo=phoneNo,
             contactName=contactName,
+            contact_email=email_to_use,
         )
 
         print("Invoice response:", response)
