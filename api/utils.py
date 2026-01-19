@@ -1,6 +1,5 @@
 import requests
 from ghl_auth.models import GHLAuthCredentials
-from api.models import Contact
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -163,10 +162,9 @@ def create_invoice(name, contact_id, services, credentials, customer_address=Non
         "Version": "2021-07-28"
     }
 
-    contact = Contact.objects.using('external').filter(contact_id=contact_id).first()
-
-    if not contact:
-        return {"error": "Contact not found"}
+    # Validate email is provided and valid
+    if not contact_email or not isinstance(contact_email, str) or "@" not in contact_email:
+        return {"error": "Valid contact email is required. Email must be provided from GHL contact or webhook payload."}
     
     line_items = []
 
@@ -213,17 +211,10 @@ def create_invoice(name, contact_id, services, credentials, customer_address=Non
         "type":'fixed' #percentage, fixed
     }
 
-    # Determine email to use: contact_email parameter > contact.email from DB > empty string
-    email_to_use = contact_email or (contact.email if contact.email else "")
-    
-    # Validate email is not empty and is a valid email format
-    if not email_to_use or not isinstance(email_to_use, str) or "@" not in email_to_use:
-        return {"error": "Valid contact email is required. Email must be provided from GHL contact or webhook payload."}
-
     contactDetails = {
         "id":contact_id,
-        "name": contactName or contact.first_name or "",
-        "email": email_to_use,
+        "name": contactName or "",
+        "email": contact_email,
         "address":{"addressLine1":customer_address or ""},
         "companyName": companyName or "",
         "phoneNo": phoneNo or ""
@@ -235,7 +226,7 @@ def create_invoice(name, contact_id, services, credentials, customer_address=Non
     }
 
     sentTo = {
-        "email":[email_to_use]
+        "email":[contact_email]
     }
 
     issue_date = datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%d")
