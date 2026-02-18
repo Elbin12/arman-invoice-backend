@@ -119,6 +119,9 @@ class Invoice(models.Model):
     invoice_total = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     amount_paid = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     amount_due = models.DecimalField(max_digits=10, decimal_places=2)
+    # Discount (from webhook / GHL)
+    discount_value = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    discount_type = models.CharField(max_length=20, null=True, blank=True)  # 'percentage' or 'fixed'
     
     # Dates
     issue_date = models.DateField()

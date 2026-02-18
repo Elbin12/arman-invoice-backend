@@ -137,7 +137,7 @@ def create_opportunity(contact_id, name, monetary_value, is_first_time):
 
     return response.json()
 
-def create_invoice(name, contact_id, services, credentials, customer_address=None, companyName=None, phoneNo=None, contactName=None, contact_email=None):
+def create_invoice(name, contact_id, services, credentials, customer_address=None, companyName=None, phoneNo=None, contactName=None, contact_email=None, discount=None):
     """
     Create an invoice in GHL for the given contact.
 
@@ -151,6 +151,8 @@ def create_invoice(name, contact_id, services, credentials, customer_address=Non
         phoneNo (str, optional): Phone number
         contactName (str, optional): Contact name
         contact_email (str, optional): Contact email (preferred from GHL contact or webhook payload)
+        discount (dict, optional): Optional. When omitted or None, no discount is applied (value=0, type=fixed).
+            When provided: { "value": number, "type": "percentage"|"fixed", "validOnProductIds": optional }
 
     Returns:
         dict: Response from GHL API
@@ -206,10 +208,22 @@ def create_invoice(name, contact_id, services, credentials, customer_address=Non
 
     print("Final line_items payload:", line_items)  # DEBUG
 
-    discount= {
-        "value":0,
-        "type":'fixed' #percentage, fixed
-    }
+    # Build discount for GHL API (optional: from webhook payload when provided; otherwise no discount)
+    discount_value = 0
+    discount_type = "fixed"
+    valid_on_product_ids = None
+    if discount is not None and isinstance(discount, dict):
+        try:
+            discount_value = float(discount.get("value", 0) or 0)
+        except (TypeError, ValueError):
+            discount_value = 0
+        discount_type = (discount.get("type") or "fixed").lower()
+        if discount_type not in ("percentage", "fixed"):
+            discount_type = "fixed"
+        valid_on_product_ids = discount.get("validOnProductIds")
+    discount_payload = {"value": discount_value, "type": discount_type}
+    if valid_on_product_ids is not None:
+        discount_payload["validOnProductIds"] = valid_on_product_ids
 
     contactDetails = {
         "id":contact_id,
@@ -238,7 +252,7 @@ def create_invoice(name, contact_id, services, credentials, customer_address=Non
         "businessDetails":businessDetails,
         "currency":"USD",
         "items": line_items,
-        "discount":discount,
+        "discount": discount_payload,
         "contactDetails":contactDetails,
         "issueDate":issue_date,
         "sentTo": sentTo,

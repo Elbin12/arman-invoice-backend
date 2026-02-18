@@ -127,9 +127,10 @@ def make_api_call():
             )
 
 
-def save_invoice_to_db(ghl_response, contact_id, contact_name, contact_email, contact_phone, contact_address, company_name, location_id):
+def save_invoice_to_db(ghl_response, contact_id, contact_name, contact_email, contact_phone, contact_address, company_name, location_id, discount=None):
     """
-    Save invoice data from GHL response to database
+    Save invoice data from GHL response to database.
+    discount (dict, optional): From webhook payload { "value": number, "type": "percentage"|"fixed" }.
     """
     try:
         # Parse dates
@@ -172,6 +173,21 @@ def save_invoice_to_db(ghl_response, contact_id, contact_name, contact_email, co
         contact_address = contact_address_obj.get("addressLine1") or contact_address
         company_name = contact_details.get("companyName") or company_name
         
+        # Discount: from GHL response or webhook payload
+        discount_obj = ghl_response.get("discount") or discount or {}
+        discount_value = None
+        discount_type = None
+        if discount_obj:
+            try:
+                v = discount_obj.get("value")
+                if v is not None:
+                    discount_value = Decimal(str(v))
+            except (TypeError, ValueError):
+                pass
+            discount_type = (discount_obj.get("type") or "").strip() or None
+            if discount_type and discount_type not in ("percentage", "fixed"):
+                discount_type = "fixed"
+        
         # Create or update invoice
         invoice, created = Invoice.objects.update_or_create(
             ghl_invoice_id=ghl_response.get("_id"),
@@ -184,6 +200,8 @@ def save_invoice_to_db(ghl_response, contact_id, contact_name, contact_email, co
                 "invoice_total": Decimal(str(ghl_response.get("invoiceTotal", 0))) if ghl_response.get("invoiceTotal") else None,
                 "amount_paid": Decimal(str(ghl_response.get("amountPaid", 0))),
                 "amount_due": Decimal(str(ghl_response.get("amountDue", 0))),
+                "discount_value": discount_value,
+                "discount_type": discount_type,
                 "issue_date": issue_date,
                 "due_date": due_date,
                 "contact_id": contact_id,
@@ -278,7 +296,8 @@ def handle_webhook_event(data):
         # Get email from GHL contact response, fallback to customer_email from webhook payload
         ghl_contact_email = contacts[0].get("email")
         email_to_use = ghl_contact_email or customer_email
-        
+        # Discount from webhook payload (optional; omit or leave null when no discount)
+        discount = data.get("discount")  # None when not sent – create_invoice uses no discount
         response = create_invoice(
             name=invoice_name,
             contact_id=contact_id,
@@ -289,6 +308,7 @@ def handle_webhook_event(data):
             phoneNo=phoneNo,
             contactName=contactName,
             contact_email=email_to_use,
+            discount=discount,
         )
 
         print("Invoice response:", response)
@@ -302,7 +322,7 @@ def handle_webhook_event(data):
             webhook_location_id = data.get("location_id") or credentials.location_id
             if webhook_location_id == "b8qvo7VooP3JD3dIZU42":
                 try:
-                    saved_invoice = save_invoice_to_db(response, contact_id, contactName, contacts[0].get("email"), phoneNo, customer_address, companyName, webhook_location_id)
+                    saved_invoice = save_invoice_to_db(response, contact_id, contactName, contacts[0].get("email"), phoneNo, customer_address, companyName, webhook_location_id, discount=data.get("discount"))  # discount optional
                     print(f"Invoice saved to database with token: {saved_invoice.token}")
                 except Exception as e:
                     print(f"Error saving invoice to database: {e}")

@@ -383,6 +383,8 @@ class PublicInvoiceView(APIView):
             "invoice_total": str(invoice.invoice_total) if invoice.invoice_total else None,
             "amount_paid": str(invoice.amount_paid),
             "amount_due": str(invoice.amount_due),
+            "discount_value": str(invoice.discount_value) if invoice.discount_value is not None else None,
+            "discount_type": invoice.discount_type,
             "is_paid": invoice.is_paid,
             "issue_date": invoice.issue_date.isoformat() if invoice.issue_date else None,
             "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
@@ -645,7 +647,10 @@ class CreateStripeCheckoutSession(APIView):
             frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
             frontend_url = frontend_url.rstrip('/')
             
-            # Create Checkout Session
+            # Charge only the amount due (when discount is applied, amount_due is already the discounted amount from GHL).
+            amount_to_charge = float(invoice.amount_due)
+            
+            # Create Checkout Session - customer pays only invoice.amount_due (discounted amount when discount exists)
             checkout_session = stripe.checkout.Session.create(
                 payment_method_types=['card'],
                 line_items=[{
@@ -655,7 +660,7 @@ class CreateStripeCheckoutSession(APIView):
                             'name': f"Invoice #{invoice.invoice_number or 'N/A'}",
                             'description': invoice.name,
                         },
-                        'unit_amount': int(float(invoice.amount_due) * 100),  # Convert to cents
+                        'unit_amount': int(round(amount_to_charge * 100)),  # Convert to cents; discounted amount when discount applied
                     },
                     'quantity': 1,
                 }],
