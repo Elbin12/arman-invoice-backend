@@ -569,3 +569,41 @@ def record_payment_in_ghl(invoice, amount_paid):
             "success": False,
             "error": error_msg
         }
+
+
+def trigger_tip_webhook(job_id, tip_amount, notes=None):
+    """
+    Call Service Pilot tip webhook after a customer adds a tip and completes payment.
+    POST https://services.theservicepilot.com/api/job/tip-webhook/
+    """
+    if not job_id or tip_amount is None or float(tip_amount) <= 0:
+        return {"success": False, "error": "job_id and positive tip_amount required"}
+    url = "https://services.theservicepilot.com/api/job/tip-webhook/"
+    payload = {
+        "job_id": str(job_id),
+        "tip_amount": round(float(tip_amount), 2),
+        "notes": (notes or "").strip() or "Customer tip from payment",
+    }
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=15,
+        )
+        if response.status_code in (200, 201, 204):
+            print(f"Tip webhook sent for job_id={job_id}, tip_amount={tip_amount}")
+            return {"success": True, "data": response.json() if response.text else {}}
+        return {
+            "success": False,
+            "error": f"Tip webhook returned {response.status_code}: {response.text}",
+            "status_code": response.status_code,
+        }
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Request error calling tip webhook: {e}"
+        print(error_msg)
+        return {"success": False, "error": error_msg}
+    except Exception as e:
+        error_msg = f"Unexpected error calling tip webhook: {e}"
+        print(error_msg)
+        return {"success": False, "error": error_msg}

@@ -152,6 +152,13 @@ class Invoice(models.Model):
     live_mode = models.BooleanField(default=True)
     raw_data = models.JSONField(default=dict, blank=True)  # Store full GHL response
     
+    # Job reference (from webhook) - used for tip webhook to Service Pilot
+    job_id = models.CharField(max_length=100, null=True, blank=True)
+
+    # Tip (stored when payment completes with tip; not added to GHL invoice)
+    tip_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    tip_notes = models.TextField(null=True, blank=True)
+
     # Stripe payment tracking
     stripe_payment_intent_id = models.CharField(max_length=200, null=True, blank=True)
     stripe_checkout_session_id = models.CharField(max_length=200, null=True, blank=True)

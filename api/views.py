@@ -15,7 +15,7 @@ import os
 from .models import Service, Contact, Job, WebhookLog, Invoice, InvoiceItem
 from ghl_auth.models import GHLAuthCredentials, GHLUser, CommissionRule
 from .seriallizers import ServiceSerializer, ContactSerializer, GHLUserSerializer, PayrollSerializer, GHLUserPercentageEditSerializer, CommissionRuleEditSerializer
-from .utils import create_opportunity, create_invoice, add_followers, record_payment_in_ghl, add_invoice_paid_tag_to_contact
+from .utils import create_opportunity, create_invoice, add_followers, record_payment_in_ghl, add_invoice_paid_tag_to_contact, trigger_tip_webhook
 from .tasks import handle_webhook_event, handle_user_create_webhook_event, payroll_webhook_event
 
 import json
@@ -416,8 +416,10 @@ class PublicInvoiceView(APIView):
             "sent_at": invoice.sent_at.isoformat() if invoice.sent_at else None,
             "signature": invoice.signature,
             "signed_at": invoice.signed_at.isoformat() if invoice.signed_at else None,
+            "tip_amount": str(invoice.tip_amount) if invoice.tip_amount is not None and invoice.tip_amount > 0 else None,
+            "tip_notes": invoice.tip_notes or None,
         }
-        
+
         return Response(invoice_data)
 
 
@@ -517,36 +519,54 @@ class VerifyPaymentStatus(APIView):
                 payment_intent_id = session.payment_intent
                 if payment_intent_id:
                     invoice.stripe_payment_intent_id = payment_intent_id
-                
-                # Get amount paid from session
+
+                # Get amount paid from session (may include tip; GHL gets invoice amount only)
                 amount_total = session.amount_total or 0  # Amount in cents
                 amount_paid = float(amount_total) / 100  # Convert to dollars
-                
+                metadata = getattr(session, 'metadata', None) or {}
+                tip_amount_str = metadata.get('tip_amount')
+                tip_notes = metadata.get('tip_notes') or 'Customer tip from payment'
+
                 # Check if invoice was already paid to avoid duplicate GHL calls
                 was_already_paid = invoice.is_paid
-                
-                # Update invoice status
+                # GHL: record only invoice amount (not tip)
+                ghl_amount = float(invoice.amount_due)
+
+                # Update invoice status and store tip if present
                 invoice.status = 'paid'
                 invoice.amount_paid = amount_paid
                 invoice.amount_due = max(0, float(invoice.total) - amount_paid)
+                if tip_amount_str:
+                    try:
+                        invoice.tip_amount = float(tip_amount_str)
+                        invoice.tip_notes = tip_notes or None
+                    except (TypeError, ValueError):
+                        pass
                 invoice.save()
-                
-                # Record payment in GHL (only if it wasn't already paid)
+
+                # Record payment in GHL: invoice total only (tip is not added to GHL)
                 ghl_result = {"success": False, "error": "Already processed"}
                 tag_result = {"success": False, "error": "Already processed"}
                 if not was_already_paid:
-                    ghl_result = record_payment_in_ghl(invoice, amount_paid)
+                    ghl_result = record_payment_in_ghl(invoice, ghl_amount)
                     if not ghl_result.get("success"):
                         print(f"Warning: Failed to record payment in GHL: {ghl_result.get('error')}")
-                        # Don't fail the request if GHL recording fails, just log it
-                    
-                    # Add "invoice_paid" tag to GHL contact
+
                     tag_result = add_invoice_paid_tag_to_contact(invoice.contact_id, invoice.location_id)
                     if tag_result.get("success"):
                         print(f"Successfully added invoice_paid tag to contact {invoice.contact_id}")
                     else:
                         print(f"Warning: Failed to add invoice_paid tag to contact {invoice.contact_id}: {tag_result.get('error')}")
-                
+
+                # If customer added a tip, trigger Service Pilot tip webhook
+                if tip_amount_str and invoice.job_id:
+                    try:
+                        tip_amount_val = float(tip_amount_str)
+                        if tip_amount_val > 0:
+                            trigger_tip_webhook(invoice.job_id, tip_amount_val, tip_notes)
+                    except (TypeError, ValueError):
+                        pass
+
                 return Response({
                     "status": "paid",
                     "message": "Payment verified and invoice updated",
@@ -646,33 +666,63 @@ class CreateStripeCheckoutSession(APIView):
             # Get frontend URL for success/cancel redirects
             frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
             frontend_url = frontend_url.rstrip('/')
-            
-            # Charge only the amount due (when discount is applied, amount_due is already the discounted amount from GHL).
-            amount_to_charge = float(invoice.amount_due)
-            
-            # Create Checkout Session - customer pays only invoice.amount_due (discounted amount when discount exists)
-            checkout_session = stripe.checkout.Session.create(
-                payment_method_types=['card'],
-                line_items=[{
+
+            # Optional tip (not added to GHL invoice; only charged in Stripe and sent to Service Pilot tip webhook)
+            tip_amount = request.data.get('tip_amount')
+            tip_notes = request.data.get('tip_notes') or ''
+            if tip_amount is not None:
+                try:
+                    tip_amount = max(0, float(tip_amount))
+                except (TypeError, ValueError):
+                    tip_amount = 0
+            else:
+                tip_amount = 0
+
+            # Charge: invoice amount due + optional tip. GHL gets only invoice amount; tip triggers Service Pilot webhook.
+            amount_invoice = float(invoice.amount_due)
+            amount_to_charge = amount_invoice + tip_amount
+
+            line_items = [{
+                'price_data': {
+                    'currency': invoice.currency.lower(),
+                    'product_data': {
+                        'name': f"Invoice #{invoice.invoice_number or 'N/A'}",
+                        'description': invoice.name,
+                    },
+                    'unit_amount': int(round(amount_invoice * 100)),
+                },
+                'quantity': 1,
+            }]
+            if tip_amount > 0:
+                line_items.append({
                     'price_data': {
                         'currency': invoice.currency.lower(),
                         'product_data': {
-                            'name': f"Invoice #{invoice.invoice_number or 'N/A'}",
-                            'description': invoice.name,
+                            'name': 'Tip',
+                            'description': tip_notes or 'Customer tip from payment',
                         },
-                        'unit_amount': int(round(amount_to_charge * 100)),  # Convert to cents; discounted amount when discount applied
+                        'unit_amount': int(round(tip_amount * 100)),
                     },
                     'quantity': 1,
-                }],
+                })
+
+            metadata = {
+                'invoice_token': str(invoice.token),
+                'invoice_id': str(invoice.id),
+                'invoice_number': invoice.invoice_number or '',
+            }
+            if tip_amount > 0:
+                metadata['tip_amount'] = str(round(tip_amount, 2))
+                metadata['tip_notes'] = (tip_notes or '').strip() or 'Customer tip from payment'
+
+            checkout_session = stripe.checkout.Session.create(
+                payment_method_types=['card'],
+                line_items=line_items,
                 mode='payment',
                 success_url=f'{frontend_url}/invoice/{token}/?payment=success',
                 cancel_url=f'{frontend_url}/invoice/{token}/?payment=cancelled',
                 customer_email=invoice.contact_email,
-                metadata={
-                    'invoice_token': str(invoice.token),
-                    'invoice_id': str(invoice.id),
-                    'invoice_number': invoice.invoice_number or '',
-                },
+                metadata=metadata,
             )
             
             # Save checkout session ID to invoice
@@ -740,29 +790,40 @@ def stripe_webhook_handler(request):
                     if payment_intent_id:
                         invoice.stripe_payment_intent_id = payment_intent_id
                     
-                    # Get amount paid from session
+                    # Get amount paid from session (may include tip; GHL gets invoice amount only)
                     amount_total = session.get('amount_total', 0)  # Amount in cents
                     amount_paid = float(amount_total) / 100  # Convert to dollars
-                    
+                    metadata = session.get('metadata') or {}
+                    tip_amount_str = metadata.get('tip_amount')
+                    tip_notes = metadata.get('tip_notes') or 'Customer tip from payment'
+
                     # Check if invoice was already paid to avoid duplicate GHL calls
                     was_already_paid = invoice.is_paid
-                    
-                    # Update invoice status
+                    # GHL: record only invoice amount (not tip)
+                    ghl_amount = float(invoice.amount_due)
+
+                    # Update invoice status and store tip if present
                     invoice.status = 'paid'
                     invoice.amount_paid = amount_paid
                     invoice.amount_due = max(0, float(invoice.total) - amount_paid)
+                    if tip_amount_str:
+                        try:
+                            invoice.tip_amount = float(tip_amount_str)
+                            invoice.tip_notes = tip_notes or None
+                        except (TypeError, ValueError):
+                            pass
                     invoice.save()
-                    
+
                     print(f"Invoice {invoice.invoice_number} marked as paid. Amount: ${amount_paid}")
-                    
-                    # Record payment in GHL (only if it wasn't already paid)
+
+                    # Record payment in GHL: invoice total only (tip is not added to GHL)
                     if not was_already_paid:
-                        ghl_result = record_payment_in_ghl(invoice, amount_paid)
+                        ghl_result = record_payment_in_ghl(invoice, ghl_amount)
                         if ghl_result.get("success"):
                             print(f"Payment recorded in GHL for invoice {invoice.invoice_number}")
                         else:
                             print(f"Warning: Failed to record payment in GHL for invoice {invoice.invoice_number}: {ghl_result.get('error')}")
-                        
+
                         # Add "invoice_paid" tag to GHL contact
                         tag_result = add_invoice_paid_tag_to_contact(invoice.contact_id, invoice.location_id)
                         if tag_result.get("success"):
@@ -771,7 +832,32 @@ def stripe_webhook_handler(request):
                             print(f"Warning: Failed to add invoice_paid tag to contact {invoice.contact_id}: {tag_result.get('error')}")
                     else:
                         print(f"Invoice {invoice.invoice_number} was already marked as paid, skipping GHL payment recording")
-                    
+
+                    # If customer added a tip, trigger Service Pilot tip webhook
+                    if tip_amount_str and invoice.job_id:
+                        print("tip_amount_str", tip_amount_str)
+                        print("invoice.job_id", invoice.job_id)
+                        print("tip_notes", tip_notes)
+                        try:
+                            tip_amount_val = float(tip_amount_str)
+                            print("tip_amount_val", tip_amount_val)
+                            if tip_amount_val > 0:
+                                print("triggering tip webhook")
+                                tip_result = trigger_tip_webhook(invoice.job_id, tip_amount_val, tip_notes)
+                                print("tip_result", tip_result)
+                                if tip_result.get("success"):
+                                    print("tip_result success")
+                                    print(f"Tip webhook sent for job_id={invoice.job_id}, tip=${tip_amount_val}")
+                                else:
+                                    print(f"Warning: Tip webhook failed for job_id={invoice.job_id}: {tip_result.get('error')}")
+                        except (TypeError, ValueError) as e:
+                            print("error in tip webhook")
+                            print(e.message)
+                            pass
+                        except Exception as e:
+                            print("error in tip webhook")
+                            print(e)
+                            pass
                 except Invoice.DoesNotExist:
                     print(f"Invoice not found for session: {session_id}")
                 except Exception as e:

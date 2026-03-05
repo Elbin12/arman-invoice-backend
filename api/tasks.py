@@ -127,10 +127,11 @@ def make_api_call():
             )
 
 
-def save_invoice_to_db(ghl_response, contact_id, contact_name, contact_email, contact_phone, contact_address, company_name, location_id, discount=None):
+def save_invoice_to_db(ghl_response, contact_id, contact_name, contact_email, contact_phone, contact_address, company_name, location_id, discount=None, job_id=None):
     """
     Save invoice data from GHL response to database.
     discount (dict, optional): From webhook payload { "value": number, "type": "percentage"|"fixed" }.
+    job_id (str, optional): Job UUID from webhook, used for tip webhook to Service Pilot.
     """
     try:
         # Parse dates
@@ -189,34 +190,37 @@ def save_invoice_to_db(ghl_response, contact_id, contact_name, contact_email, co
                 discount_type = "fixed"
         
         # Create or update invoice
+        defaults = {
+            "invoice_number": ghl_response.get("invoiceNumber"),
+            "name": ghl_response.get("name"),
+            "status": ghl_response.get("status", "draft"),
+            "currency": ghl_response.get("currency", "USD"),
+            "total": Decimal(str(ghl_response.get("total", 0))),
+            "invoice_total": Decimal(str(ghl_response.get("invoiceTotal", 0))) if ghl_response.get("invoiceTotal") else None,
+            "amount_paid": Decimal(str(ghl_response.get("amountPaid", 0))),
+            "amount_due": Decimal(str(ghl_response.get("amountDue", 0))),
+            "discount_value": discount_value,
+            "discount_type": discount_type,
+            "issue_date": issue_date,
+            "due_date": due_date,
+            "contact_id": contact_id,
+            "contact_name": contact_name,
+            "contact_email": contact_email,
+            "contact_phone": contact_phone,
+            "contact_address": contact_address,
+            "contact_company_name": company_name,
+            "business_name": business_name,
+            "business_logo_url": business_logo_url,
+            "location_id": location_id,
+            "company_id": ghl_response.get("companyId"),
+            "live_mode": ghl_response.get("liveMode", True),
+            "raw_data": ghl_response,
+        }
+        if job_id is not None:
+            defaults["job_id"] = job_id
         invoice, created = Invoice.objects.update_or_create(
             ghl_invoice_id=ghl_response.get("_id"),
-            defaults={
-                "invoice_number": ghl_response.get("invoiceNumber"),
-                "name": ghl_response.get("name"),
-                "status": ghl_response.get("status", "draft"),
-                "currency": ghl_response.get("currency", "USD"),
-                "total": Decimal(str(ghl_response.get("total", 0))),
-                "invoice_total": Decimal(str(ghl_response.get("invoiceTotal", 0))) if ghl_response.get("invoiceTotal") else None,
-                "amount_paid": Decimal(str(ghl_response.get("amountPaid", 0))),
-                "amount_due": Decimal(str(ghl_response.get("amountDue", 0))),
-                "discount_value": discount_value,
-                "discount_type": discount_type,
-                "issue_date": issue_date,
-                "due_date": due_date,
-                "contact_id": contact_id,
-                "contact_name": contact_name,
-                "contact_email": contact_email,
-                "contact_phone": contact_phone,
-                "contact_address": contact_address,
-                "contact_company_name": company_name,
-                "business_name": business_name,
-                "business_logo_url": business_logo_url,
-                "location_id": location_id,
-                "company_id": ghl_response.get("companyId"),
-                "live_mode": ghl_response.get("liveMode", True),
-                "raw_data": ghl_response,
-            }
+            defaults=defaults,
         )
 
 
@@ -322,7 +326,8 @@ def handle_webhook_event(data):
             webhook_location_id = data.get("location_id") or credentials.location_id
             if webhook_location_id == "b8qvo7VooP3JD3dIZU42":
                 try:
-                    saved_invoice = save_invoice_to_db(response, contact_id, contactName, contacts[0].get("email"), phoneNo, customer_address, companyName, webhook_location_id, discount=data.get("discount"))  # discount optional
+                    job_id = data.get("job_id")  # Job UUID for Service Pilot tip webhook
+                    saved_invoice = save_invoice_to_db(response, contact_id, contactName, contacts[0].get("email"), phoneNo, customer_address, companyName, webhook_location_id, discount=data.get("discount"), job_id=job_id)
                     print(f"Invoice saved to database with token: {saved_invoice.token}")
                 except Exception as e:
                     print(f"Error saving invoice to database: {e}")
