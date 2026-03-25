@@ -244,9 +244,11 @@ STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY_TEST")
 # print(STRIPE_PUBLISHABLE_KEY, 'STRIPE_PUBLISHABLE_KEY')
 # STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")  # Add this later for webhook verification
 
+# Refresh GHL OAuth tokens periodically. GHL access tokens last ~24h; refresh token lasts longer.
+# Twice daily keeps healthy margin before expiry without hammering the token endpoint.
 CELERY_BEAT_SCHEDULE = {
-    'make-api-call-every-minute': {
+    'refresh-ghl-oauth-tokens': {
         'task': 'api.tasks.make_api_call',
-        'schedule': timedelta(hours=8)
+        'schedule': timedelta(hours=12),
     },
 }
