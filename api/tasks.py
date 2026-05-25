@@ -410,6 +410,7 @@ def handle_webhook_event(data):
 
             result = {
                 "invoice": response,
+                "ghl_invoice_id": invoice_id,
                 "contact_update": update_resp,
                 "invoice_send": send_resp
             }

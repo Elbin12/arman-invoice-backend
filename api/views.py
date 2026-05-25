@@ -36,6 +36,8 @@ def webhook_handler(request):
         
         # Prepare response
         response_data = {"message": "Webhook received"}
+        if result and result.get("ghl_invoice_id"):
+            response_data["ghl_invoice_id"] = result.get("ghl_invoice_id")
         
         # If location_id matches and invoice was saved, include invoice URL in response
         location_id = data.get("location_id")
