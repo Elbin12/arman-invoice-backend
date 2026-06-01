@@ -283,19 +283,22 @@ def handle_webhook_event(data):
                 print(f"No GHL contact found for email: {customer_email}")
                 return {"error": f"Contact not found for {customer_email}"}
 
-        contact_id = contacts[0].get("id") or contacts[0].get("_id")
+        contact = contacts[0]
+        contact_id = contact.get("id") or contact.get("_id")
 
         # bussinessName = None
-        companyName = contacts[0].get("companyName")
-        phoneNo = contacts[0].get("phone")
-        contactName = contacts[0].get("contactName")
+        companyName = contact.get("companyName")
+        phoneNo = contact.get("phone")
+        contactName = contact.get("contactName") or " ".join(
+            filter(None, [contact.get("firstName"), contact.get("lastName")])
+        ).strip() or customer_name
         # if businessId:
         #     print(f"Contact belongs to businessId: {businessId}.")
         #     business_info = getBussiness(credentials.access_token, businessId)
         #     bussinessName = business_info.get("name")
 
         print("companyName", companyName)
-        tags = contacts[0].get("tags")
+        tags = contact.get("tags")
         if not contact_id:
             print("Contact found, but ID missing.")
             return {"error": "Invalid contact data"}
@@ -306,7 +309,7 @@ def handle_webhook_event(data):
 
         # Create invoice
         # Get email from GHL contact response, fallback to customer_email from webhook payload
-        ghl_contact_email = contacts[0].get("email")
+        ghl_contact_email = contact.get("email")
         email_to_use = ghl_contact_email or customer_email
         # Discount from webhook payload (optional; omit or leave null when no discount)
         discount = data.get("discount")  # None when not sent – create_invoice uses no discount
@@ -335,7 +338,7 @@ def handle_webhook_event(data):
             if webhook_location_id == "b8qvo7VooP3JD3dIZU42":
                 try:
                     job_id = data.get("job_id")  # Job UUID for Service Pilot tip webhook
-                    saved_invoice = save_invoice_to_db(response, contact_id, contactName, contacts[0].get("email"), phoneNo, customer_address, companyName, webhook_location_id, discount=data.get("discount"), job_id=job_id)
+                    saved_invoice = save_invoice_to_db(response, contact_id, contactName, contact.get("email"), phoneNo, customer_address, companyName, webhook_location_id, discount=data.get("discount"), job_id=job_id)
                     print(f"Invoice saved to database with token: {saved_invoice.token}")
                 except Exception as e:
                     print(f"Error saving invoice to database: {e}")
@@ -375,7 +378,7 @@ def handle_webhook_event(data):
             if webhook_location_id == "b8qvo7VooP3JD3dIZU42" and saved_invoice:
                 try:
                     # Get existing custom fields from contact
-                    existing_custom_fields = contacts[0].get("customFields") or []
+                    existing_custom_fields = contact.get("customFields") or []
                     if not isinstance(existing_custom_fields, list):
                         existing_custom_fields = []
                     
