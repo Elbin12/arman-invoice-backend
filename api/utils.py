@@ -366,6 +366,22 @@ def search_ghl_contact(access_token, email, locationId):
     print("Raw response:", response.status_code, response.text, response.json())
     return response.json().get("contacts", [])
 
+
+def get_ghl_contact(access_token, contact_id):
+    url = f'https://services.leadconnectorhq.com/contacts/{contact_id}'
+    response = requests.get(
+        url,
+        headers={
+            'Accept': 'application/json',
+            'Authorization': f"Bearer {access_token}",
+            'Version': '2021-07-28'
+        },
+    )
+    print("Get contact response:", response.status_code, response.text)
+    if response.status_code != 200:
+        return None
+    return response.json().get("contact")
+
 def update_contact(contact_id, data):
     url = f'https://services.leadconnectorhq.com/contacts/{contact_id}'
     credentials = GHLAuthCredentials.objects.first()

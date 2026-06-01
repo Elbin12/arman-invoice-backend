@@ -5,7 +5,7 @@ from django.conf import settings
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timedelta
 
-from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id, search_ghl_contact, create_invoice, update_contact, getBussiness
+from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id, search_ghl_contact, get_ghl_contact, create_invoice, update_contact, getBussiness
 from ghl_auth.models import GHLUser, CommissionRule
 from .models import Payout, Invoice, InvoiceItem
 
@@ -259,21 +259,29 @@ def handle_webhook_event(data):
         services = data.get("selected_services", [])
         customer_address = data.get("customer_address")
         location_id = data.get("location_id")
+        ghl_contact_id = data.get("ghl_contact_id")
 
-        if not customer_email:
-            print("No customer email in webhook payload.")
-            return {"error": "Customer email missing"}
+        if not ghl_contact_id and not customer_email:
+            print("No ghl_contact_id or customer_email in webhook payload.")
+            return {"error": "Contact identifier missing (ghl_contact_id or customer_email required)"}
 
         if location_id:
             credentials = GHLAuthCredentials.objects.get(location_id=location_id)
         else:
             credentials = GHLAuthCredentials.objects.first()
 
-        # Search contact
-        contacts = search_ghl_contact(credentials.access_token, customer_email, credentials.location_id)
-        if not contacts:
-            print(f"No GHL contact found for email: {customer_email}")
-            return {"error": f"Contact not found for {customer_email}"}
+        # Resolve contact: by GHL contact id when provided, otherwise by email search
+        if ghl_contact_id:
+            contact = get_ghl_contact(credentials.access_token, ghl_contact_id)
+            if not contact:
+                print(f"No GHL contact found for id: {ghl_contact_id}")
+                return {"error": f"Contact not found for id {ghl_contact_id}"}
+            contacts = [contact]
+        else:
+            contacts = search_ghl_contact(credentials.access_token, customer_email, credentials.location_id)
+            if not contacts:
+                print(f"No GHL contact found for email: {customer_email}")
+                return {"error": f"Contact not found for {customer_email}"}
 
         contact_id = contacts[0].get("id") or contacts[0].get("_id")
 

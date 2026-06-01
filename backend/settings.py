@@ -246,9 +246,9 @@ STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY_TEST")
 
 # Refresh GHL OAuth tokens periodically. GHL access tokens last ~24h; refresh token lasts longer.
 # Twice daily keeps healthy margin before expiry without hammering the token endpoint.
-CELERY_BEAT_SCHEDULE = {
-    'refresh-ghl-oauth-tokens': {
-        'task': 'api.tasks.make_api_call',
-        'schedule': timedelta(hours=12),
-    },
-}
+# CELERY_BEAT_SCHEDULE = {
+#     'refresh-ghl-oauth-tokens': {
+#         'task': 'api.tasks.make_api_call',
+#         'schedule': timedelta(hours=12),
+#     },
+# }
