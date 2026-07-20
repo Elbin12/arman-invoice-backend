@@ -352,19 +352,84 @@ def fetch_opportunity_by_id(opportunity_id):
         return {}
 
 
+def _ghl_headers(access_token):
+    return {
+        'Accept': 'application/json',
+        'Authorization': f"Bearer {access_token}",
+        'Version': '2021-07-28',
+        'Content-Type': 'application/json',
+    }
+
+
+def _normalize_contacts(payload):
+    """Normalize GHL contact search responses to a list of contact dicts."""
+    if not payload or not isinstance(payload, dict):
+        return []
+    contact = payload.get("contact")
+    if isinstance(contact, dict) and (contact.get("id") or contact.get("_id")):
+        return [contact]
+    contacts = payload.get("contacts")
+    if isinstance(contacts, list):
+        return [c for c in contacts if isinstance(c, dict)]
+    return []
+
+
 def search_ghl_contact(access_token, email, locationId):
-    url = 'https://services.leadconnectorhq.com/contacts/'
-    response = requests.get(
-        url,
-        headers={
-            'Accept': 'application/json',
-            'Authorization': f"Bearer {access_token}",
-            'Version': '2021-07-28'
-        },
-        params={"query": email, "locationId": locationId}
-    )
-    print("Raw response:", response.status_code, response.text, response.json())
-    return response.json().get("contacts", [])
+    """
+    Find a GHL contact by email for a location.
+
+    Uses exact duplicate lookup first, then advanced search. The deprecated
+    GET /contacts/?query= list API often returns empty even when the contact exists.
+    """
+    if not email:
+        return []
+
+    email = email.strip()
+    headers = _ghl_headers(access_token)
+
+    # 1) Exact match via duplicate lookup
+    dup_url = 'https://services.leadconnectorhq.com/contacts/search/duplicate'
+    try:
+        dup_resp = requests.get(
+            dup_url,
+            headers=headers,
+            params={"email": email, "locationId": locationId},
+            timeout=30,
+        )
+        print("Duplicate lookup response:", dup_resp.status_code, dup_resp.text)
+        if dup_resp.status_code == 200:
+            contacts = _normalize_contacts(dup_resp.json())
+            if contacts:
+                return contacts
+    except Exception as e:
+        print(f"Error in duplicate contact lookup: {e}")
+
+    # 2) Advanced search with exact email filter
+    search_url = 'https://services.leadconnectorhq.com/contacts/search'
+    try:
+        search_resp = requests.post(
+            search_url,
+            headers=headers,
+            json={
+                "locationId": locationId,
+                "page": 1,
+                "pageLimit": 10,
+                "filters": [
+                    {"field": "email", "operator": "eq", "value": email}
+                ],
+            },
+            timeout=30,
+        )
+        print("Advanced search response:", search_resp.status_code, search_resp.text)
+        if search_resp.status_code == 200:
+            contacts = _normalize_contacts(search_resp.json())
+            if contacts:
+                return contacts
+    except Exception as e:
+        print(f"Error in advanced contact search: {e}")
+
+    print(f"No GHL contact found for email via duplicate/search: {email}")
+    return []
 
 
 def get_ghl_contact(access_token, contact_id):
