@@ -903,8 +903,13 @@ def stripe_webhook_handler(request):
 @csrf_exempt
 def invoice_paid_webhook_handler(request):
     """
-    Webhook handler to mark invoice as paid when payment is received
-    Receives ghl_invoice_id and marks the corresponding invoice as paid
+    Webhook handler to mark invoice as paid when payment is received from GHL.
+    Expected payload:
+    {
+      "ghl_invoice_id": "<ghl_invoice_id>",
+      "status": "paid"
+    }
+    Does not call GHL record-payment (invoice already paid in GHL).
     """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
@@ -912,10 +917,23 @@ def invoice_paid_webhook_handler(request):
     try:
         data = json.loads(request.body)
         ghl_invoice_id = data.get('ghl_invoice_id')
+        status = (data.get('status') or '').strip().lower()
         
         if not ghl_invoice_id:
             return JsonResponse({
                 "error": "ghl_invoice_id is required"
+            }, status=400)
+        
+        if not status:
+            return JsonResponse({
+                "error": "status is required"
+            }, status=400)
+        
+        if status != 'paid':
+            return JsonResponse({
+                "error": f"Unsupported status '{status}'. Only 'paid' is accepted.",
+                "ghl_invoice_id": ghl_invoice_id,
+                "status": status
             }, status=400)
         
         # Fetch invoice by ghl_invoice_id
@@ -930,14 +948,13 @@ def invoice_paid_webhook_handler(request):
         if invoice.status == 'paid':
             return JsonResponse({
                 "message": "Invoice is already marked as paid",
-                "invoice_id": invoice.ghl_invoice_id,
+                "ghl_invoice_id": invoice.ghl_invoice_id,
                 "invoice_number": invoice.invoice_number,
                 "status": invoice.status
             }, status=200)
         
-        # Mark invoice as paid
+        # Mark invoice as paid locally (no GHL record-payment call)
         invoice.status = 'paid'
-        # Set amount_paid to total if not already set
         if invoice.amount_paid == 0:
             invoice.amount_paid = invoice.total
         invoice.amount_due = max(0, float(invoice.total) - float(invoice.amount_paid))
@@ -954,7 +971,7 @@ def invoice_paid_webhook_handler(request):
         
         return JsonResponse({
             "message": "Invoice marked as paid successfully",
-            "invoice_id": invoice.ghl_invoice_id,
+            "ghl_invoice_id": invoice.ghl_invoice_id,
             "invoice_number": invoice.invoice_number,
             "status": invoice.status,
             "amount_paid": str(invoice.amount_paid),
