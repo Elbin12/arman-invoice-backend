@@ -1,4 +1,4 @@
-import requests, logging
+import logging
 from celery import shared_task
 from ghl_auth.models import GHLAuthCredentials
 from django.conf import settings
@@ -7,124 +7,32 @@ from datetime import datetime, timedelta
 
 from api.utils import send_invoice, extract_invoice_id_from_name, fetch_opportunity_by_id, search_ghl_contact, get_ghl_contact, create_invoice, update_contact, getBussiness
 from ghl_auth.models import GHLUser, CommissionRule
+from ghl_auth.token_service import refresh_all_credentials, ensure_fresh_credentials
 from .models import Payout, Invoice, InvoiceItem
-
-
-GHL_CLIENT_ID = settings.GHL_CLIENT_ID
-GHL_CLIENT_SECRET = settings.GHL_CLIENT_SECRET
 
 logger = logging.getLogger(__name__)
 
-# @shared_task
-# def make_api_call():
-#     tokens = GHLAuthCredentials.objects.all()
 
-#     for credentials in tokens:
-    
-#         print("credentials tokenL", credentials)
-#         refresh_token = credentials.refresh_token
-
-        
-#         response = requests.post('https://services.leadconnectorhq.com/oauth/token', data={
-#             'grant_type': 'refresh_token',
-#             'client_id': GHL_CLIENT_ID,
-#             'client_secret': GHL_CLIENT_SECRET,
-#             'refresh_token': refresh_token
-#         })
-        
-#         new_tokens = response.json()
-#         obj, created = GHLAuthCredentials.objects.update_or_create(
-#                 location_id= new_tokens.get("locationId"),
-#                 defaults={
-#                     "access_token": new_tokens.get("access_token"),
-#                     "refresh_token": new_tokens.get("refresh_token"),
-#                     "expires_in": new_tokens.get("expires_in"),
-#                     "scope": new_tokens.get("scope"),
-#                     "user_type": new_tokens.get("userType"),
-#                     "company_id": new_tokens.get("companyId"),
-#                     "user_id":new_tokens.get("userId"),
-#                 }
-#             )
-#         print(response, 'responseee', new_tokens)
-#         print("refreshed: ", obj)
-
-@shared_task
-def make_api_call():
-    """Refresh OAuth tokens for all GHL credentials"""
-    tokens = GHLAuthCredentials.objects.all()
-    
-    if not tokens.exists():
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def make_api_call(self):
+    """
+    Periodic GHL OAuth token refresh (celery beat).
+    Force refresh so the refresh-token rotation stays healthy even when access
+    token still looks fresh. Failures raise so celery can retry.
+    """
+    if not GHLAuthCredentials.objects.exists():
         logger.warning("No GHL credentials found to refresh")
-        return
+        return {"ok": [], "failed": [], "skipped": []}
 
-    for credentials in tokens:
-        try:
-            logger.info(f"Refreshing token for location: {credentials.location_id}")
-            refresh_token = credentials.refresh_token
-
-            # Make the refresh request
-            response = requests.post(
-                'https://services.leadconnectorhq.com/oauth/token',
-                data={
-                    'grant_type': 'refresh_token',
-                    'client_id': GHL_CLIENT_ID,
-                    'client_secret': GHL_CLIENT_SECRET,
-                    'refresh_token': refresh_token
-                },
-                timeout=10  # Add timeout
-            )
-            
-            # Check if request was successful
-            if response.status_code != 200:
-                logger.error(
-                    f"Token refresh failed for location {credentials.location_id}. "
-                    f"Status: {response.status_code}, Response: {response.text}"
-                )
-                continue
-            
-            # Parse response
-            new_tokens = response.json()
-            
-            # Validate response contains required fields
-            if 'access_token' not in new_tokens or 'refresh_token' not in new_tokens:
-                logger.error(
-                    f"Invalid token response for location {credentials.location_id}: "
-                    f"{new_tokens}"
-                )
-                continue
-            
-            # Update credentials
-            obj, created = GHLAuthCredentials.objects.update_or_create(
-                location_id=new_tokens.get("locationId"),
-                defaults={
-                    "access_token": new_tokens.get("access_token"),
-                    "refresh_token": new_tokens.get("refresh_token"),
-                    "expires_in": new_tokens.get("expires_in"),
-                    "scope": new_tokens.get("scope"),
-                    "user_type": new_tokens.get("userType"),
-                    "company_id": new_tokens.get("companyId"),
-                    "user_id": new_tokens.get("userId"),
-                }
-            )
-            
-            action = "created" if created else "updated"
-            logger.info(
-                f"Successfully {action} credentials for location {obj.location_id}"
-            )
-
-            logger.info(
-                f"Status: {response.status_code}, Response: {response.text}"
-            )
-            
-        except requests.RequestException as e:
-            logger.error(
-                f"Network error refreshing token for location {credentials.location_id}: {e}"
-            )
-        except Exception as e:
-            logger.error(
-                f"Unexpected error refreshing token for location {credentials.location_id}: {e}",
-                exc_info=True
-            )
+    try:
+        results = refresh_all_credentials(force=True)
+        if results["failed"]:
+            raise RuntimeError(f"GHL token refresh had failures: {results['failed']}")
+        logger.info("GHL token refresh task finished: %s", results)
+        return results
+    except Exception as exc:
+        logger.exception("GHL token refresh task failed")
+        raise self.retry(exc=exc)
 
 
 def save_invoice_to_db(ghl_response, contact_id, contact_name, contact_email, contact_phone, contact_address, company_name, location_id, discount=None, job_id=None):
@@ -265,20 +173,27 @@ def handle_webhook_event(data):
             print("No ghl_contact_id or customer_email in webhook payload.")
             return {"error": "Contact identifier missing (ghl_contact_id or customer_email required)"}
 
-        if location_id:
-            credentials = GHLAuthCredentials.objects.get(location_id=location_id)
-        else:
-            credentials = GHLAuthCredentials.objects.first()
+        try:
+            credentials = ensure_fresh_credentials(location_id=location_id)
+        except Exception as e:
+            logger.error("Unable to load/refresh GHL credentials: %s", e, exc_info=True)
+            return {"error": f"GHL credentials unavailable: {e}"}
 
         # Resolve contact: by GHL contact id when provided, otherwise by email search
+        # get_ghl_contact / search_ghl_contact auto-refresh on 401 Invalid JWT
         if ghl_contact_id:
-            contact = get_ghl_contact(credentials.access_token, ghl_contact_id)
+            contact = get_ghl_contact(credentials.access_token, ghl_contact_id, credentials=credentials)
             if not contact:
                 print(f"No GHL contact found for id: {ghl_contact_id}")
                 return {"error": f"Contact not found for id {ghl_contact_id}"}
             contacts = [contact]
         else:
-            contacts = search_ghl_contact(credentials.access_token, customer_email, credentials.location_id)
+            contacts = search_ghl_contact(
+                credentials.access_token,
+                customer_email,
+                credentials.location_id,
+                credentials=credentials,
+            )
             if not contacts:
                 print(f"No GHL contact found for email: {customer_email}")
                 return {"error": f"Contact not found for {customer_email}"}

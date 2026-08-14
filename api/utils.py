@@ -1,5 +1,7 @@
+import logging
 import requests
 from ghl_auth.models import GHLAuthCredentials
+from ghl_auth.token_service import ensure_fresh_credentials, ghl_request
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -8,18 +10,19 @@ from django.conf import settings
 
 PIPELINE_ID = settings.PIPELINE_ID
 PIPELINE_STAGE_ID = settings.PIPELINE_STAGE_ID
+logger = logging.getLogger(__name__)
 
-def get_or_create_product(access_token, location_id, product_name, custom_data):
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {access_token}',
-        'Version': '2021-07-28'
-    }
-
+def get_or_create_product(access_token, location_id, product_name, custom_data, credentials=None):
     search_url = f"https://services.leadconnectorhq.com/products/?locationId={location_id}&search={product_name}"
-    
+
     try:
-        response = requests.get(search_url, headers=headers)
+        response = ghl_request(
+            "GET",
+            search_url,
+            credentials=credentials,
+            location_id=location_id,
+            headers={"Authorization": f"Bearer {access_token}"} if access_token and not credentials else None,
+        )
         if response.status_code == 200:
             products = response.json().get('products', [])
             if products:
@@ -30,19 +33,12 @@ def get_or_create_product(access_token, location_id, product_name, custom_data):
                 }
     except Exception as e:
         print(f"Error searching for product: {e}")
-    
+
     # If not found, create it
-    return create_product(access_token, location_id, product_name, custom_data)
+    return create_product(access_token, location_id, product_name, custom_data, credentials=credentials)
 
 
-def create_product(access_token, location_id, product_name, custom_data):
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json',
-        'Version': '2021-07-28'
-    }
-
+def create_product(access_token, location_id, product_name, custom_data, credentials=None):
     try:
         price = float(custom_data.get("price", 0))
     except (ValueError, TypeError):
@@ -62,18 +58,24 @@ def create_product(access_token, location_id, product_name, custom_data):
     url = "https://services.leadconnectorhq.com/products/"
 
     try:
-        response = requests.post(url, headers=headers, json=product_data)
+        response = ghl_request(
+            "POST",
+            url,
+            credentials=credentials,
+            location_id=location_id,
+            json=product_data,
+            headers={"Authorization": f"Bearer {access_token}"} if access_token and not credentials else None,
+        )
         print(response.json(), 'response')
         if response.status_code in [200, 201]:
             product = response.json()
             product_id = product.get('_id')
-            # price_id = product.get('prices', [{}])[0].get('_id')  # Extract first price
             return {"productId": product_id}
         else:
             print(f"Failed to create product: {response.status_code} - {response.text}")
     except Exception as e:
         print(f"Error creating product: {e}")
-    
+
     return None
 
 
@@ -94,13 +96,7 @@ def create_opportunity(contact_id, name, monetary_value, is_first_time):
 
     url = 'https://services.leadconnectorhq.com/opportunities/'
 
-    credentials = GHLAuthCredentials.objects.first()
-
-    headers = {
-        "Authorization": f"Bearer {credentials.access_token}",
-        "Content-Type": "application/json",
-        "Version": "2021-07-28"
-    }
+    credentials = ensure_fresh_credentials()
 
     customFields = [
         {
@@ -123,18 +119,7 @@ def create_opportunity(contact_id, name, monetary_value, is_first_time):
     if monetary_value:
         payload["monetaryValue"] = monetary_value
 
-    # if services:
-    #     # Replace 'custom_field_services_abc123' with the actual custom field ID from GHL
-    #     payload["customField"] = {
-    #         "custom_field_services_abc123": services
-    #     }
-
-    response = requests.post(
-        url,
-        json=payload,
-        headers=headers
-    )
-
+    response = ghl_request("POST", url, credentials=credentials, json=payload)
     return response.json()
 
 def create_invoice(name, contact_id, services, credentials, customer_address=None, companyName=None, phoneNo=None, contactName=None, contact_email=None, discount=None):
@@ -158,16 +143,18 @@ def create_invoice(name, contact_id, services, credentials, customer_address=Non
         dict: Response from GHL API
     """
     url = "https://services.leadconnectorhq.com/invoices/"
-    headers = {
-        "Authorization": f"Bearer {credentials.access_token}",
-        "Content-Type": "application/json",
-        "Version": "2021-07-28"
-    }
 
     # Validate email is provided and valid
     if not contact_email or not isinstance(contact_email, str) or "@" not in contact_email:
         return {"error": "Valid contact email is required. Email must be provided from GHL contact or webhook payload."}
-    
+
+    # Ensure token is usable before product/invoice calls; 401 path will refresh again.
+    try:
+        credentials = ensure_fresh_credentials(credentials)
+    except Exception as e:
+        logger.error("Unable to refresh GHL credentials before invoice create: %s", e)
+        return {"error": f"GHL credentials unavailable: {e}"}
+
     line_items = []
 
     for service in services:
@@ -178,7 +165,8 @@ def create_invoice(name, contact_id, services, credentials, customer_address=Non
             credentials.access_token,
             credentials.location_id,
             product_name,
-            custom_data=service
+            custom_data=service,
+            credentials=credentials,
         )
         if not product_info:
             print(f"Skipping service: {product_name} (no product info)")
@@ -263,8 +251,11 @@ def create_invoice(name, contact_id, services, credentials, customer_address=Non
         }
     }
 
-    response = requests.post(url, headers=headers, json=payload)
-    return response.json()
+    response = ghl_request("POST", url, credentials=credentials, json=payload)
+    try:
+        return response.json()
+    except Exception:
+        return {"error": f"Invalid GHL invoice response ({response.status_code}): {response.text[:300]}"}
 
 
 
@@ -276,32 +267,19 @@ def updateJob(data):
 
 def add_followers(id, followers, credentials):
     url = f'https://services.leadconnectorhq.com/opportunities/{id}/followers'
-    
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {credentials.access_token}',
-        'Content-Type': 'application/json',
-        'Version': '2021-07-28'
-    }
-
-    payload = {
-        "followers": followers
-    }
-
+    payload = {"followers": followers}
     try:
-        response = requests.post(url=url, headers=headers, json=payload)
+        response = ghl_request("POST", url, credentials=credentials, json=payload)
         return response.json()
     except Exception as e:
         return {"error": str(e)}
-    
+
 def send_invoice(invoiceId):
     url = f'https://services.leadconnectorhq.com/invoices/{invoiceId}/send'
-    credentials = GHLAuthCredentials.objects.first()
-    
-    headers = {
-        'Authorization': f'Bearer {credentials.access_token}',
-        'Version': '2021-07-28'
-    }
+    try:
+        credentials = ensure_fresh_credentials()
+    except Exception as e:
+        return {"error": str(e)}
 
     payload = {
         "altId": credentials.location_id,
@@ -312,12 +290,12 @@ def send_invoice(invoiceId):
     }
 
     try:
-        response = requests.post(url=url, headers=headers, json=payload)
+        response = ghl_request("POST", url, credentials=credentials, json=payload)
         print('invoice_response', response.json())
         return response.json()
     except Exception as e:
         return {"error": str(e)}
-    
+
 
 def extract_invoice_id_from_name(opportunity_name):
     try:
@@ -329,18 +307,16 @@ def fetch_opportunity_by_id(opportunity_id):
     """
     Fetch a single opportunity's details from GHL by ID.
     """
-    credentials = GHLAuthCredentials.objects.first()
+    try:
+        credentials = ensure_fresh_credentials()
+    except Exception as e:
+        print(f"Error getting GHL credentials: {e}")
+        return {}
 
     url = f"https://services.leadconnectorhq.com/opportunities/{opportunity_id}"
 
-    headers = {
-        "Authorization": f"Bearer {credentials.access_token}",
-        "Content-Type": "application/json",
-        "Version": "2021-07-28"
-    }
-
     try:
-        response = requests.get(url=url, headers=headers)
+        response = ghl_request("GET", url, credentials=credentials)
         print(response.json(), 'response fetch opp')
         if response.status_code == 200:
             return response.json().get("opportunity", {})
@@ -350,15 +326,6 @@ def fetch_opportunity_by_id(opportunity_id):
     except Exception as e:
         print(f"Error fetching opportunity by ID: {str(e)}")
         return {}
-
-
-def _ghl_headers(access_token):
-    return {
-        'Accept': 'application/json',
-        'Authorization': f"Bearer {access_token}",
-        'Version': '2021-07-28',
-        'Content-Type': 'application/json',
-    }
 
 
 def _normalize_contacts(payload):
@@ -374,27 +341,29 @@ def _normalize_contacts(payload):
     return []
 
 
-def search_ghl_contact(access_token, email, locationId):
+def search_ghl_contact(access_token, email, locationId, credentials=None):
     """
     Find a GHL contact by email for a location.
 
     Uses exact duplicate lookup first, then advanced search. The deprecated
     GET /contacts/?query= list API often returns empty even when the contact exists.
+    Auto-refreshes on 401 Invalid JWT when credentials are available.
     """
     if not email:
         return []
 
     email = email.strip()
-    headers = _ghl_headers(access_token)
 
     # 1) Exact match via duplicate lookup
     dup_url = 'https://services.leadconnectorhq.com/contacts/search/duplicate'
     try:
-        dup_resp = requests.get(
+        dup_resp = ghl_request(
+            "GET",
             dup_url,
-            headers=headers,
+            credentials=credentials,
+            location_id=locationId,
             params={"email": email, "locationId": locationId},
-            timeout=30,
+            headers={"Authorization": f"Bearer {access_token}"} if access_token and not credentials else None,
         )
         print("Duplicate lookup response:", dup_resp.status_code, dup_resp.text)
         if dup_resp.status_code == 200:
@@ -407,9 +376,11 @@ def search_ghl_contact(access_token, email, locationId):
     # 2) Advanced search with exact email filter
     search_url = 'https://services.leadconnectorhq.com/contacts/search'
     try:
-        search_resp = requests.post(
+        search_resp = ghl_request(
+            "POST",
             search_url,
-            headers=headers,
+            credentials=credentials,
+            location_id=locationId,
             json={
                 "locationId": locationId,
                 "page": 1,
@@ -418,7 +389,6 @@ def search_ghl_contact(access_token, email, locationId):
                     {"field": "email", "operator": "eq", "value": email}
                 ],
             },
-            timeout=30,
         )
         print("Advanced search response:", search_resp.status_code, search_resp.text)
         if search_resp.status_code == 200:
@@ -432,50 +402,44 @@ def search_ghl_contact(access_token, email, locationId):
     return []
 
 
-def get_ghl_contact(access_token, contact_id):
+def get_ghl_contact(access_token, contact_id, credentials=None):
     url = f'https://services.leadconnectorhq.com/contacts/{contact_id}'
-    response = requests.get(
+    response = ghl_request(
+        "GET",
         url,
-        headers={
-            'Accept': 'application/json',
-            'Authorization': f"Bearer {access_token}",
-            'Version': '2021-07-28'
-        },
+        credentials=credentials,
+        headers={"Authorization": f"Bearer {access_token}"} if access_token and not credentials else None,
     )
     print("Get contact response:", response.status_code, response.text)
     if response.status_code != 200:
         return None
     return response.json().get("contact")
 
-def update_contact(contact_id, data):
+def update_contact(contact_id, data, credentials=None):
     url = f'https://services.leadconnectorhq.com/contacts/{contact_id}'
-    credentials = GHLAuthCredentials.objects.first()
+    try:
+        credentials = ensure_fresh_credentials(credentials)
+    except Exception as e:
+        print(e, 'errorrr')
+        return {'error': 'Error while updating ghl contact'}
     print(credentials, 'creee')
 
-    headers = {
-        'Authorization': f'Bearer {credentials.access_token}',
-        'Content-Type': 'application/json',
-        'Version':'2021-07-28'
-    }
-
     try:
-        response = requests.put(url, headers=headers, json=data)
+        response = ghl_request("PUT", url, credentials=credentials, json=data)
         print(response.json(), 'responseeeeee')
         return response.json()
     except Exception as e:
         print(e, 'errorrr')
         return {'error':'Error while updating ghl contact'}
 
-def getBussiness(access_token, businessId):
+def getBussiness(access_token, businessId, credentials=None):
     url = 'https://services.leadconnectorhq.com/businesses/'
-    response = requests.get(
+    response = ghl_request(
+        "GET",
         url,
-        headers={
-            'Accept': 'application/json',
-            'Authorization': f"Bearer {access_token}",
-            'Version': '2021-07-28'
-        },
-        params={"businessId": businessId}
+        credentials=credentials,
+        params={"businessId": businessId},
+        headers={"Authorization": f"Bearer {access_token}"} if access_token and not credentials else None,
     )
     print("Raw response business:", response.status_code, response.text, response.json())
     return response.json().get("business", [])
@@ -484,71 +448,61 @@ def getBussiness(access_token, businessId):
 def add_invoice_paid_tag_to_contact(contact_id, location_id=None):
     """
     Add "invoice_paid" tag to a GHL contact
-    
+
     Args:
         contact_id: GHL contact ID
         location_id: Optional location ID for credentials lookup
-    
+
     Returns:
         dict with success status and response data or error message
     """
     try:
-        # Get GHL credentials - try to get by location_id first, otherwise get first
-        credentials = None
-        if location_id:
-            credentials = GHLAuthCredentials.objects.filter(location_id=location_id).first()
-        if not credentials:
-            credentials = GHLAuthCredentials.objects.first()
-        
-        if not credentials:
+        try:
+            credentials = ensure_fresh_credentials(location_id=location_id)
+        except Exception:
             print("No GHL credentials found for adding invoice_paid tag")
             return {"success": False, "error": "No GHL credentials found"}
-        
+
         # Fetch contact to get existing tags
         url = f'https://services.leadconnectorhq.com/contacts/{contact_id}'
-        headers = {
-            'Accept': 'application/json',
-            'Authorization': f'Bearer {credentials.access_token}',
-            'Version': '2021-07-28'
-        }
-        
+
         try:
-            get_response = requests.get(url, headers=headers)
+            get_response = ghl_request("GET", url, credentials=credentials)
             if get_response.status_code != 200:
                 print(f"Failed to fetch contact {contact_id}: {get_response.status_code}")
                 return {"success": False, "error": f"Failed to fetch contact: {get_response.status_code}"}
-            
+
             contact_data = get_response.json().get("contact", {})
             existing_tags = contact_data.get("tags", [])
-            
+
             # Ensure tags is a list
             if not isinstance(existing_tags, list):
                 existing_tags = []
-            
+
             # Check if "invoice_paid" tag already exists
             if "invoice_paid" in existing_tags:
                 print(f"Contact {contact_id} already has invoice_paid tag")
                 return {"success": True, "message": "Tag already exists"}
-            
+
             # Add "invoice_paid" tag
             updated_tags = list(set(existing_tags + ["invoice_paid"]))
             payload = {"tags": updated_tags}
-            
+
             # Update contact with new tags
-            update_result = update_contact(contact_id, payload)
-            
+            update_result = update_contact(contact_id, payload, credentials=credentials)
+
             if update_result.get("error"):
                 print(f"Error updating contact tags: {update_result.get('error')}")
                 return {"success": False, "error": update_result.get("error")}
-            
+
             print(f"Successfully added invoice_paid tag to contact {contact_id}")
             return {"success": True, "data": update_result}
-            
+
         except requests.exceptions.RequestException as e:
             error_msg = f"Request error adding tag to contact: {str(e)}"
             print(error_msg)
             return {"success": False, "error": error_msg}
-            
+
     except Exception as e:
         error_msg = f"Unexpected error adding invoice_paid tag: {str(e)}"
         print(error_msg)
@@ -560,11 +514,11 @@ def add_invoice_paid_tag_to_contact(contact_id, location_id=None):
 def record_payment_in_ghl(invoice, amount_paid):
     """
     Record payment in GHL (GoHighLevel) for the invoice
-    
+
     Args:
         invoice: Invoice model instance
         amount_paid: Decimal amount that was paid
-    
+
     Returns:
         dict with success status and response data or error message
     """
@@ -572,32 +526,16 @@ def record_payment_in_ghl(invoice, amount_paid):
     if not invoice.ghl_invoice_id:
         print(f"Invoice {invoice.invoice_number} does not have GHL invoice ID, skipping GHL payment recording")
         return {"success": False, "error": "No GHL invoice ID found"}
-    
-    # Get GHL credentials - try to get by location_id first, otherwise get first
+
     try:
-        credentials = None
-        if invoice.location_id:
-            credentials = GHLAuthCredentials.objects.filter(location_id=invoice.location_id).first()
-        if not credentials:
-            credentials = GHLAuthCredentials.objects.first()
-        
-        if not credentials:
-            print("No GHL credentials found")
-            return {"success": False, "error": "No GHL credentials found"}
+        credentials = ensure_fresh_credentials(location_id=invoice.location_id)
     except Exception as e:
         print(f"Error getting GHL credentials: {e}")
         return {"success": False, "error": f"Error getting credentials: {str(e)}"}
-    
+
     # Prepare the API request
     url = f'https://services.leadconnectorhq.com/invoices/{invoice.ghl_invoice_id}/record-payment'
-    
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Version': '2021-07-28',
-        'Authorization': f'Bearer {credentials.access_token}'
-    }
-    
+
     # Prepare payment data
     from datetime import datetime
     payment_data = {
@@ -616,10 +554,10 @@ def record_payment_in_ghl(invoice, amount_paid):
         },
         "fulfilledAt": datetime.now().isoformat() + "Z"
     }
-    
+
     try:
-        response = requests.post(url, headers=headers, json=payment_data, timeout=30)
-        
+        response = ghl_request("POST", url, credentials=credentials, json=payment_data, timeout=30)
+
         if response.status_code in [200, 201]:
             print(f"Successfully recorded payment in GHL for invoice {invoice.invoice_number}")
             return {

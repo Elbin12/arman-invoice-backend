@@ -1,21 +1,15 @@
 from .models import GHLAuthCredentials, GHLUser
-
-import requests
+from ghl_auth.token_service import ghl_request
 
 
 def pull_users(locationId):
-    token = GHLAuthCredentials.objects.get(location_id=locationId)
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {token.access_token}',
-        'Content-Type': 'application/json',
-        'Version': '2021-07-28'  # or '2021-04-15' for calendars endpoint
-    }
+    credentials = GHLAuthCredentials.objects.get(location_id=locationId)
 
     # Step 2: Fetch users and save/update GHLUser entries
-    user_response = requests.get(
+    user_response = ghl_request(
+        "GET",
         f"https://services.leadconnectorhq.com/users/?locationId={locationId}",
-        headers=headers
+        credentials=credentials,
     )
 
     if user_response.status_code != 200:
@@ -34,5 +28,6 @@ def pull_users(locationId):
                 "name": user.get("name", ""),
                 "email": user.get("email", ""),
                 "phone": user.get("phone", ""),
-                "location_id": locationId,            }
+                "location_id": locationId,
+            },
         )

@@ -55,7 +55,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',
 
     'api',
-    'ghl_auth',
+    'ghl_auth.apps.GhlAuthConfig',
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -244,11 +244,12 @@ STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY_TEST")
 # print(STRIPE_PUBLISHABLE_KEY, 'STRIPE_PUBLISHABLE_KEY')
 # STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")  # Add this later for webhook verification
 
-# Refresh GHL OAuth tokens periodically. GHL access tokens last ~24h; refresh token lasts longer.
-# Twice daily keeps healthy margin before expiry without hammering the token endpoint.
-# CELERY_BEAT_SCHEDULE = {
-#     'refresh-ghl-oauth-tokens': {
-#         'task': 'api.tasks.make_api_call',
-#         'schedule': timedelta(hours=12),
-#     },
-# }
+# Refresh GHL OAuth tokens periodically.
+# Access tokens last ~24h. Every 4h gives margin if celery/redis briefly miss a run.
+# DatabaseScheduler also stores this as PeriodicTask; AppConfig ensures it exists.
+CELERY_BEAT_SCHEDULE = {
+    'refresh-ghl-oauth-tokens': {
+        'task': 'api.tasks.make_api_call',
+        'schedule': timedelta(hours=4),
+    },
+}
